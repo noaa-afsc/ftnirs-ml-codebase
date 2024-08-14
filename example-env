@@ -1,0 +1,5 @@
+HOSTIP=1.2.3.4
+APPPORT=1234
+GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
+DATA_BUCKET="mlapp_data_bucket"
+TMP_BUCKET="mlapp_tmp_bucket"
