@@ -1,0 +1,8 @@
+README.md
+setup.py
+ftnirsml.egg-info/PKG-INFO
+ftnirsml.egg-info/SOURCES.txt
+ftnirsml.egg-info/dependency_links.txt
+ftnirsml.egg-info/not-zip-safe
+ftnirsml.egg-info/requires.txt
+ftnirsml.egg-info/top_level.txt
