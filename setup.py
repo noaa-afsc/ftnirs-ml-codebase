@@ -22,7 +22,7 @@ setup(
     "scipy",
     "PyWavelets",
     "shap"
-    ]
+    ],
     classifiers=[  # Classifiers that describe the project
         "Programming Language :: Python :: 3",
         "License :: MIT License'",
