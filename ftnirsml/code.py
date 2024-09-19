@@ -3,13 +3,11 @@ import numpy as np
 import tensorflow as tf
 import seaborn as sns
 import pyCompare
-import matplotlib
-import keras_tuner as kt
-import h5py
-import json
-import joblib
 import pickle
 import base64
+import os
+import io
+import zipfile
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, Normalizer, RobustScaler, MaxAbsScaler
 from matplotlib import pyplot as plt
@@ -21,18 +19,17 @@ from tensorflow.keras.utils import plot_model
 from tensorflow.keras.layers import LeakyReLU, Input, Dense, Dropout, Flatten, Conv1D, MaxPooling1D, concatenate
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from tensorflow.keras.optimizers import Adam
 from tensorflow.keras import regularizers
 from tensorflow.keras.metrics import MeanSquaredError, MeanAbsoluteError
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from scipy.ndimage import uniform_filter1d, gaussian_filter1d, median_filter
+#PyWavelets
 import pywt
 from sklearn.decomposition import PCA
 import sys
-from io import StringIO
 from sklearn.model_selection import KFold
 import shap
-
-
 # Use for internal functions which rely on intermediates
 import tempfile
 
@@ -62,14 +59,8 @@ def enforce_data_format(data: pd.DataFrame):
     
     return True  
 
-def read_and_clean_data(data_source, drop_outliers=True):
-    if isinstance(data_source, str):
-        data = pd.read_csv(data_source)
-    elif isinstance(data_source, StringIO):
-        data = pd.read_csv(data_source)
-    else:
-        raise ValueError("data_source must be a file path (str) or a StringIO object.")
-    
+def read_and_clean_data(data, drop_outliers=True):
+
     enforce_data_format(data) # throws error if format not followed
     
     if data.isnull().values.any():
@@ -200,7 +191,7 @@ def build_model(hp, input_dim_A, input_dim_B):
 
     output = Dense(1, activation="linear")(z)
     model = Model(inputs=[input_A, input_B], outputs=output)
-    model.compile(optimizer='adam', loss='mse', metrics=['mse', 'mae'])
+    model.compile(optimizer=Adam(), loss='mse', metrics=['mse', 'mae'])
     return model
 
 # Training, evaluation, and plotting functions
@@ -363,31 +354,37 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
 
     output = Dense(1, activation="linear")(z)
     model = Model(inputs=[input_A, input_B], outputs=output)
-    model.compile(optimizer='adam', loss='mse', metrics=['mse', 'mae'])
+    model.compile(optimizer=Adam(), loss='mse', metrics=['mse', 'mae'])
     return model
 
 # Inference function 
-def InferenceMode(model_or_path, data, row_number, scaler_y=None, scaler_x=None):
+def InferenceMode(model_or_path, data, scaler_y=None, scaler_x=None):
     if isinstance(model_or_path, str):
         # Load model from disk
         model = load_model(model_or_path)
     else:
         # Use the provided model object
         model = model_or_path
-    
-    # Extract the specific row for inference
-    sample_data = data.iloc[row_number]
 
-    # Extract the full set of features (columns 3 to 1100)
-    full_data = sample_data[data.columns[3:1100]].values.reshape(1, -1)
-    
+    feature_columns = data.columns.difference(['filename', 'sample', 'age'])
+
+    #print(scaler_x)
+
     # Apply the same scaling used during training
     if scaler_x:
-        full_data = scaler_x.transform(full_data)
-    
-    # Split the scaled data into biological and wavenumber data
-    biological_data = full_data[:, :97]  # Columns 3-100 (biological variables)
-    wavenumber_data = full_data[:, 97:].reshape(1, -1, 1)  # Columns 101-1100 (wavenumber variables)
+        data[feature_columns] = scaler_x.transform(data[feature_columns])
+
+    biological_data = data[data.columns[3:100]]
+    wavenumber_data = data[data.columns[100:1100]]
+
+    #import hashlib
+    #print('hash value of data struct into predict:')
+    #hasher = hashlib.md5()
+    #test1 = biological_data
+    #test1[0][:]= np.empty(len(test1[0][:]), dtype=object)
+    #hasher.update((pickle.dumps([test1, wavenumber_data])))
+    #print(hasher.hexdigest())
+    #should equal: '805313e71322ad2fcfe6cd6892147704'
     
     # Run inference
     prediction = model.predict([biological_data, wavenumber_data])
@@ -503,7 +500,7 @@ def TrainingModeWithoutHyperband(raw_data, filter_CHOICE, scaling_CHOICE, model_
     return training_outputs, {}
 
 # Training Mode with Fine-tuning 
-def TrainingModeFinetuning(raw_data, filter_CHOICE, scaling_CHOICE, file_path, seed_value=42):
+def TrainingModeFinetuning(model, raw_data, filter_CHOICE, scaling_CHOICE, seed_value=42):
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
 
@@ -516,10 +513,6 @@ def TrainingModeFinetuning(raw_data, filter_CHOICE, scaling_CHOICE, file_path, s
     # Apply scaling
     scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
     data, scaler_x, scaler_y = apply_scaling(data, scaling_method)
-
-    # Load the pretrained model
-    model = load_model(file_path)
-    print(f"Loaded model from {file_path}")
 
     # Set the input dimensions based on the data format
     input_dim_A = 97  # Columns 3-100
@@ -586,63 +579,62 @@ def final_training_pass(model, data, nb_epoch, batch_size):
     
     return history
 
-# Model saving and metadata handling functions
-def saveModel(model, path):
-    model.save(path)
-    print(f"Model saved to {path}")
 
-def saveModelWithMetadata(path, model, old_metadata_path, column_names, description, training_approach, scaler_x, scaler_y):
-    model.save(path)
-    print(f"Model only saved to {path}")
+# will  write if given a dirpath, otherwise will export the zipfile as in memory io object.
+# not the prettiest behavior, open to suggestion.
 
-    scaler_x_str = base64.b64encode(pickle.dumps(scaler_x)).decode('utf-8')
-    scaler_y_str = base64.b64encode(pickle.dumps(scaler_y)).decode('utf-8')
+def modelToZipIO(model, model_name,metadata=None, previous_metadata = None):
 
-    try:
-        old_metadata = readModelMetadata(old_metadata_path)
-    except:
-        old_metadata = []
+    if metadata is None and previous_metadata is None:
+        return ValueError("need to provide metadata to use this function: otherwise, just save with vanilla keras model.save()")
 
-    new_metadata = [
-        json.dumps(column_names),
-        description,
-        training_approach,
-        scaler_x_str,
-        scaler_y_str
-    ]
-
-    old_metadata.append(new_metadata)
-
-    with h5py.File(path, 'a') as f:
-        if 'metadata' not in f:
-            metadata_group = f.create_group('metadata')
-        else:
-            metadata_group = f['metadata']
-
-        metadata_str = json.dumps(old_metadata)
-        metadata_group.create_dataset('metadata_history', data=metadata_str)
-
-    print(f"Metadata added to {path}")
-
-def readModelMetadata(path):
-    with h5py.File(path, 'r') as f:
-        if 'metadata' in f:
-            metadata_str = f['metadata']['metadata_history'][()]
-            metadata = json.loads(metadata_str)
-        else:
-            metadata = []
-
-    if metadata:
-        latest_metadata = metadata[-1]
-        column_names = json.loads(latest_metadata[0])
-        description = latest_metadata[1]
-        training_approach = latest_metadata[2]
-        scaler_x = pickle.loads(base64.b64decode(latest_metadata[3]))
-        scaler_y = pickle.loads(base64.b64decode(latest_metadata[4]))
+    if previous_metadata is not None:
+        assert isinstance(previous_metadata, list)  # the metadata object can be w/e, but needs to store lineage in a list.
+        previous_metadata.append(metadata)
+        metadata_all = previous_metadata
     else:
-        raise ValueError("No metadata found in the provided path.")
+        metadata_all = [metadata]
 
-    return column_names, description, training_approach, scaler_x, scaler_y
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        modelpathtmp = os.path.join(tmpdir, model_name)
+        model.save(modelpathtmp)
+
+        metadata_path = os.path.join(tmpdir,"metadata.pickle")
+        with open(metadata_path, "w") as mf:
+            mf.write(base64.b64encode(pickle.dumps(metadata_all)).decode('utf-8'))
+        mf.close()
+
+        zipdest = io.BytesIO()
+
+        with zipfile.ZipFile(zipdest,"w",compression=zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(modelpathtmp,arcname=model_name)
+            zipf.write(metadata_path,arcname="metadata.pickle")
+
+        zipdest.seek(0)
+
+    return zipdest
+def saveModelWithMetadata(model, model_path,metadata=None, previous_metadata = None):
+
+    model_name = os.path.basename(model_path)[:-4]
+
+    zipdest = modelToZipIO(model, model_name, metadata=metadata, previous_metadata=previous_metadata)
+
+    with open(model_path, "wb") as f:
+        f.write(zipdest.getvalue())
+
+def loadModelWithMetadata(path):
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+
+        with zipfile.ZipFile(path,"r") as zipf:
+            zipf.extractall(tmpdir)
+
+        model = load_model(os.path.join(tmpdir,os.path.basename(path[:-4])))
+        with open(os.path.join(tmpdir,"metadata.pickle"),"rb") as f:
+            metadata = pickle.loads(base64.b64decode(f.read()))
+
+    return model,metadata
 
 def cross_validate_model(model, data, k=5):
     kf = KFold(n_splits=k, shuffle=True, random_state=42)
