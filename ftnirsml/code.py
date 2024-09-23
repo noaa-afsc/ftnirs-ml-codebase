@@ -24,6 +24,7 @@ from tensorflow.keras import regularizers
 from tensorflow.keras.metrics import MeanSquaredError, MeanAbsoluteError
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from scipy.ndimage import uniform_filter1d, gaussian_filter1d, median_filter
+from copy import deepcopy
 #PyWavelets
 import pywt
 from sklearn.decomposition import PCA
@@ -33,6 +34,8 @@ import shap
 # Use for internal functions which rely on intermediates
 import tempfile
 
+from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS
+
 # Set seeds for reproducibility 
 np.random.seed(42)
 tf.random.set_seed(42)
@@ -41,47 +44,40 @@ tf.random.set_seed(42)
 sns.set(rc={'figure.figsize': (10, 6)})
 sns.set(style="whitegrid", font_scale=2)
 
-def enforce_data_format(data: pd.DataFrame):
-    expected_first_10 = ['filename', 'sample', 'age', 'weight', 'length', 'latitude', 'longitude', 'sex_M', 'sex_F', 'sex_immature']
-
-    if len(data.columns) < 100:
-        raise ValueError(f"DataFrame should have at least 100 columns, but it has {len(data.columns)}.")
-
-    for i, expected_name in enumerate(expected_first_10):
-        if data.columns[i] != expected_name:
-            raise ValueError(f"Column {i+1} should be named '{expected_name}', but found '{data.columns[i]}'.")
-    
-    # Columns 11 to 100 can be named anything
-    # Check that the remaining columns (101 onwards) contain 'wavenumber' or 'wn' (case-insensitive)
-    for col in data.columns[100:]:
-        if not any(keyword in col.lower() for keyword in ['wavenumber', 'wn']):
-            raise ValueError(f"Column '{col}' does not contain 'wavenumber' or 'wn'.")
-    
-    return True  
-
-def read_and_clean_data(data, drop_outliers=True):
-
-    enforce_data_format(data) # throws error if format not followed
-    
-    if data.isnull().values.any():
-        raise ValueError("Data contains NaN values")
-
-    return data
-
 # Filter functions
 def savgol_filter_func(data, window_length=17, polyorder=2, deriv=1):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     return savgol_filter(data, window_length=window_length, polyorder=polyorder, deriv=deriv)
 
 def moving_average_filter(data, size=5):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     return uniform_filter1d(data, size=size, axis=1)
 
 def gaussian_filter_func(data, sigma=2):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     return gaussian_filter1d(data, sigma=sigma, axis=1)
 
 def median_filter_func(data, size=5):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     return median_filter(data, size=(1, size))
 
 def wavelet_filter_func(data, wavelet='db1', level=1):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     def apply_wavelet(signal):
         coeffs = pywt.wavedec(signal, wavelet, level=level)
         coeffs[1:] = [pywt.threshold(i, value=0.5 * max(i)) for i in coeffs[1:]]
@@ -89,6 +85,10 @@ def wavelet_filter_func(data, wavelet='db1', level=1):
     return np.apply_along_axis(apply_wavelet, axis=1, arr=data)
 
 def fourier_filter_func(data, threshold=0.1):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     def apply_fft(signal):
         fft_data = np.fft.fft(signal)
         frequencies = np.fft.fftfreq(len(signal))
@@ -97,35 +97,59 @@ def fourier_filter_func(data, threshold=0.1):
     return np.apply_along_axis(apply_fft, axis=1, arr=data)
 
 def pca_filter_func(data, n_components=5):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     pca = PCA(n_components=n_components)
     transformed = pca.fit_transform(data)
     return pca.inverse_transform(transformed)
 
 # Scaling functions
 def apply_normalization(data, columns):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     normalizer = Normalizer()
     data[columns] = normalizer.fit_transform(data[columns])
     return data
 
 def apply_robust_scaling(data, feature_columns):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     scaler_y = RobustScaler()
     data['age'] = scaler_y.fit_transform(data[['age']])
     data[feature_columns] = data[feature_columns].apply(lambda col: RobustScaler().fit_transform(col.values.reshape(-1, 1)))
     return data, scaler_y
 
 def apply_minmax_scaling(data, feature_columns):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     scaler_y = MinMaxScaler()
     data['age'] = scaler_y.fit_transform(data[['age']])
     data[feature_columns] = data[feature_columns].apply(lambda col: MinMaxScaler().fit_transform(col.values.reshape(-1, 1)))
     return data, scaler_y
 
 def apply_maxabs_scaling(data, feature_columns):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     scaler_y = MaxAbsScaler()
     data['age'] = scaler_y.fit_transform(data[['age']])
     data[feature_columns] = data[feature_columns].apply(lambda col: MaxAbsScaler().fit_transform(col.values.reshape(-1, 1)))
     return data, scaler_y
 
 def apply_scaling(data, scaling_method='standard'):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     scalers = {
         'standard': StandardScaler,
         'minmax': MinMaxScaler,
@@ -137,7 +161,9 @@ def apply_scaling(data, scaling_method='standard'):
     if scaling_method not in scalers:
         raise ValueError(f"Unsupported scaling method: {scaling_method}")
     
-    feature_columns = data.columns.difference(['filename', 'sample', 'age'])
+    feature_columns = data.columns.difference(INFORMATIONAL + RESPONSE_COLUMNS)
+
+    print(feature_columns)
     
     # Create and fit a separate scaler for the 'age' column
     scaler_y = scalers[scaling_method]()
@@ -196,6 +222,10 @@ def build_model(hp, input_dim_A, input_dim_B):
 
 # Training, evaluation, and plotting functions
 def train_and_optimize_model(tuner, data, nb_epoch, batch_size):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
 
     X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[3:100]]
@@ -226,6 +256,10 @@ def plot_training_history(history):
     plt.show()
 
 def evaluate_model(model, data):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     X_test_biological_data = data.loc[data['sample'] == 'test', data.columns[3:100]]
     X_test_wavenumbers = data.loc[data['sample'] == 'test', data.columns[100:1100]]
     y_test = data.loc[data['sample'] == 'test', 'age']
@@ -258,6 +292,10 @@ def plot_prediction_error(preds, y_test):
     plt.show()
 
 def evaluate_training_set(model, data, scaler_y):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[3:100]]
     X_train_wavenumbers = data.loc[data['sample'] == 'training', data.columns[100:1100]]
     y_train = data.loc[data['sample'] == 'training', 'age']
@@ -359,6 +397,10 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
 
 # Inference function 
 def InferenceMode(model_or_path, data, scaler_y=None, scaler_x=None):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     if isinstance(model_or_path, str):
         # Load model from disk
         model = load_model(model_or_path)
@@ -366,7 +408,7 @@ def InferenceMode(model_or_path, data, scaler_y=None, scaler_x=None):
         # Use the provided model object
         model = model_or_path
 
-    feature_columns = data.columns.difference(['filename', 'sample', 'age'])
+    feature_columns = data.columns.difference(INFORMATIONAL+RESPONSE_COLUMNS)
 
     #print(scaler_x)
 
@@ -376,15 +418,6 @@ def InferenceMode(model_or_path, data, scaler_y=None, scaler_x=None):
 
     biological_data = data[data.columns[3:100]]
     wavenumber_data = data[data.columns[100:1100]]
-
-    #import hashlib
-    #print('hash value of data struct into predict:')
-    #hasher = hashlib.md5()
-    #test1 = biological_data
-    #test1[0][:]= np.empty(len(test1[0][:]), dtype=object)
-    #hasher.update((pickle.dumps([test1, wavenumber_data])))
-    #print(hasher.hexdigest())
-    #should equal: '805313e71322ad2fcfe6cd6892147704'
     
     # Run inference
     prediction = model.predict([biological_data, wavenumber_data])
@@ -396,17 +429,30 @@ def InferenceMode(model_or_path, data, scaler_y=None, scaler_x=None):
     return prediction
 
 # Training Mode with Hyperband 
-def TrainingModeWithHyperband(raw_data, filter_CHOICE, scaling_CHOICE, seed_value=42):
+def TrainingModeWithHyperband(data: pd.DataFrame, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, seed_value=42):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
-    
-    data = preprocess_spectra(raw_data, filter_type=filter_CHOICE)
-    
-    scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
-    data, scaler_x, scaler_y = apply_scaling(data, scaling_method)
 
-    input_dim_A = data.columns[3:100].shape[0]
-    input_dim_B = data.columns[100:1100].shape[0]
+    #first thing is format data into internal predictable ordering.
+    wn_ordered,wn_min,wn_step,wn_max,wn_inds = wnExtract(data)
+
+    formatted_data,wn_inds = formatData(data,total_bio_columns,wn_ordered,wn_min,wn_step,wn_max,wn_inds)
+    wn_start = min(wn_inds)
+
+    formatted_data = interpolateWN(data,wn_start,wn_min,wn_step,wn_max,desired_min,desired_max,desired_step)
+
+    formatted_data = preprocess_spectra(formatted_data, filter_type=filter_CHOICE,wn_start,len(formatted_data.columns))
+
+    scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
+    formatted_data, scaler_x, scaler_y = apply_scaling(formatted_data, scaling_method)
+
+    #unhardcode, here is where I add in extra columns bio columns: not sure quite yet if it should be total or extra, both are inconvenient for different reasons.
+    input_dim_A = data.columns[3:100].shape[0] #formatted_data bounded to right by wn_start, minus informational or reponse
+    input_dim_B = data.columns[100:1100].shape[0] #formatted_data to bounded to left by wn_start
     
     def model_builder(hp):
         return build_model(hp, input_dim_A, input_dim_B)
@@ -437,17 +483,20 @@ def TrainingModeWithHyperband(raw_data, filter_CHOICE, scaling_CHOICE, seed_valu
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
-        'r2_score': r2
+        'r2_score': r2,
+        'column_names': data.columns
     }
 
     return training_outputs, {}
 
 # Training Mode without Hyperband
-def TrainingModeWithoutHyperband(raw_data, filter_CHOICE, scaling_CHOICE, model_parameters, seed_value=42):
+def TrainingModeWithoutHyperband(data: pd.DataFrame, filter_CHOICE, scaling_CHOICE, model_parameters, total_bio_columns=100, seed_value=42):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
-
-    enforce_data_format(raw_data)
 
     if len(model_parameters) != 8:
         raise ValueError("model_parameters must be a list of 8 values.")
@@ -457,13 +506,14 @@ def TrainingModeWithoutHyperband(raw_data, filter_CHOICE, scaling_CHOICE, model_
     if not all(isinstance(param, (int, float, bool)) for param in model_parameters):
         raise ValueError("All model parameters must be either int, float, or bool.")
     
-    data = preprocess_spectra(raw_data, filter_type=filter_CHOICE)
+    data = preprocess_spectra(data, filter_type=filter_CHOICE)
     
     scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
     data, scaler_x, scaler_y = apply_scaling(data, scaling_method)
 
+    #unhardcode, add extra columns.
     input_dim_A = 97  # Columns 3-100
-    input_dim_B = 1000  # Columns 101-1100
+    input_dim_B = sum([WN_MATCH in c for c in data])
 
     model = build_model_manual(
         input_dim_A,
@@ -494,29 +544,34 @@ def TrainingModeWithoutHyperband(raw_data, filter_CHOICE, scaling_CHOICE, model_
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
-        'r2_score': r2
+        'r2_score': r2,
+        'column_names': data.columns
     }
     
     return training_outputs, {}
 
 # Training Mode with Fine-tuning 
-def TrainingModeFinetuning(model, raw_data, filter_CHOICE, scaling_CHOICE, seed_value=42):
+def TrainingModeFinetuning(model, data, previous_metadata, filter_CHOICE, scaling_CHOICE, seed_value=42):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
+    #unpack to dict if needed
+    if isinstance(previous_metadata, list):
+        previous_metadata = previous_metadata[-1]
+
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
 
-    # Ensure data format
-    enforce_data_format(raw_data)
-
     # Preprocess the data
-    data = preprocess_spectra(raw_data, filter_type=filter_CHOICE)
+    data = preprocess_spectra(data, filter_type=filter_CHOICE)
     
     # Apply scaling
     scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
     data, scaler_x, scaler_y = apply_scaling(data, scaling_method)
 
-    # Set the input dimensions based on the data format
-    input_dim_A = 97  # Columns 3-100
-    input_dim_B = 1000  # Columns 101-1100
+    #make sure the data columns match previous.
+    assert all(previous_metadata['column_names'] == data.columns)
 
     # Fine-tune the model on the new data
     nb_epoch = 1  # Adjust the number of epochs as needed
@@ -537,13 +592,18 @@ def TrainingModeFinetuning(model, raw_data, filter_CHOICE, scaling_CHOICE, seed_
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
-        'r2_score': r2
+        'r2_score': r2,
+        'column_names': data.columns
     }
     
     return training_outputs, {}
 
 # Spectra preprocessing function 
-def preprocess_spectra(data, filter_type='savgol'):
+def preprocess_spectra(data, filter_type='savgol',wn_ind_start=100,wn_ind_end=1100):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     filter_functions = {
         'savgol': savgol_filter_func,
         'moving_average': moving_average_filter,
@@ -555,14 +615,17 @@ def preprocess_spectra(data, filter_type='savgol'):
     }
     
     filter_func = filter_functions.get(filter_type, savgol_filter_func)
-    
-    data.loc[data['sample'] == 'training', data.columns[100:1100]] = filter_func(data.loc[data['sample'] == 'training', data.columns[100:1100]].values)
-    data.loc[data['sample'] == 'test', data.columns[100:1100]] = filter_func(data.loc[data['sample'] == 'test', data.columns[100:1100]].values)
-    
+
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
+    data.loc[:, data.columns[wn_ind_start:wn_ind_end]] = filter_func(data.loc[:, data.columns[wn_ind_start:wn_ind_end]].values)
+
     return data
 
 # Final training pass function
 def final_training_pass(model, data, nb_epoch, batch_size):
+
     earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
     X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[3:100]]
@@ -583,18 +646,41 @@ def final_training_pass(model, data, nb_epoch, batch_size):
 # will  write if given a dirpath, otherwise will export the zipfile as in memory io object.
 # not the prettiest behavior, open to suggestion.
 
-def modelToZipIO(model, model_name,metadata=None, previous_metadata = None):
+def formatMetadata(metadata=None,previous_metadata=None,mandate_some_fields=True):
 
     if metadata is None and previous_metadata is None:
-        return ValueError("need to provide metadata to use this function: otherwise, just save with vanilla keras model.save()")
+        raise ValueError("need to provide metadata to use this function: otherwise, just save with vanilla keras model.save()")
 
+    #allow for previous metadata to be a dict, which will be interpreted as a list of len 1
     if previous_metadata is not None:
-        assert isinstance(previous_metadata, list)  # the metadata object can be w/e, but needs to store lineage in a list.
+        if isinstance(previous_metadata, list):
+            pass
+        else:
+            print("Previous metadata is a dict: assuming only one previous training event. If not a correct assumption, supply a list of all previous metadata dicts.")
+            previous_metadata = [previous_metadata]
+
         previous_metadata.append(metadata)
         metadata_all = previous_metadata
     else:
-        metadata_all = [metadata]
+        #allow for metadata of list len 1 being supplied, or just a dict
+        if isinstance(metadata, list):
+            assert len(metadata)==1
+            metadata_all = metadata
+        else:
+            metadata_all = [metadata]
 
+
+    #check that mandatory fields are supplied:
+    if mandate_some_fields:
+        latest_metadata = metadata_all[-1]
+
+        if not all([y in latest_metadata for y in REQUIRED_METADATA_FIELDS_ORIGINAL]):
+            raise ValueError("Missing metadata: supply all following metadata: " + \
+                             [x for x in REQUIRED_METADATA_FIELDS_ORIGINAL] + \
+                             ", or, set 'mandate_some_metadata_fields' to FALSE in saveModelWithMetadata")
+
+    return metadata_all
+def modelToZipIO(model, model_name,metadata_all):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         modelpathtmp = os.path.join(tmpdir, model_name)
@@ -614,11 +700,18 @@ def modelToZipIO(model, model_name,metadata=None, previous_metadata = None):
         zipdest.seek(0)
 
     return zipdest
-def saveModelWithMetadata(model, model_path,metadata=None, previous_metadata = None):
+
+def packModelWithMetadata(model, model_path,metadata=None, previous_metadata = None,mandate_some_metadata_fields=True):
 
     model_name = os.path.basename(model_path)[:-4]
+    metadata_all = formatMetadata(metadata=metadata, previous_metadata=previous_metadata,mandate_some_fields=mandate_some_metadata_fields)
+    zipdest = modelToZipIO(model, model_name, metadata_all =metadata_all)
 
-    zipdest = modelToZipIO(model, model_name, metadata=metadata, previous_metadata=previous_metadata)
+    return zipdest
+
+def saveModelWithMetadata(model, model_path,metadata=None, previous_metadata = None,mandate_some_metadata_fields=True):
+
+    zipdest = packModelWithMetadata(model, model_path, metadata=metadata, previous_metadata=previous_metadata,mandate_some_metadata_fields=mandate_some_metadata_fields)
 
     with open(model_path, "wb") as f:
         f.write(zipdest.getvalue())
@@ -634,9 +727,18 @@ def loadModelWithMetadata(path):
         with open(os.path.join(tmpdir,"metadata.pickle"),"rb") as f:
             metadata = pickle.loads(base64.b64decode(f.read()))
 
+    #make metadata into a dict if len 1 to make behaviors more consistent to end users.
+    if len(metadata)==1:
+        metadata = metadata[0]
+
     return model,metadata
 
 def cross_validate_model(model, data, k=5):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
+
     kf = KFold(n_splits=k, shuffle=True, random_state=42)
     X_biological = data[data.columns[3:100]]
     X_wavenumbers = data[data.columns[100:1100]]
@@ -655,6 +757,10 @@ def cross_validate_model(model, data, k=5):
     return scores
 
 def compare_models(models, data):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     comparison_results = {}
     X_test_biological = data[data.columns[3:100]]
     X_test_wavenumbers = data[data.columns[100:1100]]
@@ -672,6 +778,10 @@ from sklearn.model_selection import GridSearchCV
 
 # Probably don't let people run this on shared resources/web hosting but let them run it on their own systems
 def grid_search_model(data, param_grid):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     X_biological = data[data.columns[3:100]]
     X_wavenumbers = data[data.columns[100:1100]]
     y = data['age']
@@ -703,6 +813,10 @@ def log_training_event(event_message):
     logging.info(event_message)
 
 def handle_missing_data(data):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
     if data.isnull().values.any():
         missing_data_report = data.isnull().sum()
         print(f"Missing Data Report:\n{missing_data_report}")
@@ -714,3 +828,11 @@ def explain_model_predictions(model, X_test_biological, X_test_wavenumbers):
     explainer = shap.KernelExplainer(model.predict, [X_test_biological, X_test_wavenumbers])
     shap_values = explainer.shap_values([X_test_biological, X_test_wavenumbers])
     shap.summary_plot(shap_values, X_test_biological)
+
+def analyze_dataset(data):
+
+    #classify and provide indeces for components of ds.
+
+
+
+    return indeces,wave_min,wav_max,wav_step
