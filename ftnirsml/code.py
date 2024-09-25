@@ -12,6 +12,7 @@ import zipfile
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, Normalizer, RobustScaler, MaxAbsScaler
 from matplotlib import pyplot as plt
 from scipy.signal import savgol_filter
+from scipy.interpolate import interp1d
 from sklearn.metrics import r2_score, mean_squared_error
 from math import sqrt
 from keras_tuner.tuners import BayesianOptimization, Hyperband
@@ -34,7 +35,7 @@ import shap
 # Use for internal functions which rely on intermediates
 import tempfile
 
-from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS
+from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME
 
 # Set seeds for reproducibility 
 np.random.seed(42)
@@ -121,7 +122,7 @@ def apply_robust_scaling(data, feature_columns):
     data = deepcopy(data)
 
     scaler_y = RobustScaler()
-    data['age'] = scaler_y.fit_transform(data[['age']])
+    data[RESPONSE_COLUMNS] = scaler_y.fit_transform(data[[RESPONSE_COLUMNS]])
     data[feature_columns] = data[feature_columns].apply(lambda col: RobustScaler().fit_transform(col.values.reshape(-1, 1)))
     return data, scaler_y
 
@@ -131,7 +132,7 @@ def apply_minmax_scaling(data, feature_columns):
     data = deepcopy(data)
 
     scaler_y = MinMaxScaler()
-    data['age'] = scaler_y.fit_transform(data[['age']])
+    data[RESPONSE_COLUMNS] = scaler_y.fit_transform(data[[RESPONSE_COLUMNS]])
     data[feature_columns] = data[feature_columns].apply(lambda col: MinMaxScaler().fit_transform(col.values.reshape(-1, 1)))
     return data, scaler_y
 
@@ -141,7 +142,7 @@ def apply_maxabs_scaling(data, feature_columns):
     data = deepcopy(data)
 
     scaler_y = MaxAbsScaler()
-    data['age'] = scaler_y.fit_transform(data[['age']])
+    data[RESPONSE_COLUMNS] = scaler_y.fit_transform(data[[RESPONSE_COLUMNS]])
     data[feature_columns] = data[feature_columns].apply(lambda col: MaxAbsScaler().fit_transform(col.values.reshape(-1, 1)))
     return data, scaler_y
 
@@ -428,30 +429,137 @@ def InferenceMode(model_or_path, data, scaler_y=None, scaler_x=None):
     
     return prediction
 
-# Training Mode with Hyperband 
-def TrainingModeWithHyperband(data: pd.DataFrame, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, seed_value=42):
+def wnExtract(data):
 
-    #required to not have side effects on the original data object
+    #rely on naming convention
+
+    wn_inds = [i for i, x in enumerate(WN_MATCH in c for c in data) if x]
+
+    wn_array = [float(c[len(WN_MATCH):]) for c in data if WN_MATCH in c]
+
+    wn_min = min(wn_array)
+    wn_max = max(wn_array)
+
+    wn_order = "asc" if wn_array[0]<wn_array[1] else 'desc'
+
+    #calculate average step size
+    step = (wn_max-wn_min)/len(wn_array)
+
+    return wn_order, wn_array, wn_min, step, wn_max, wn_inds
+
+
+def resample_spectroscopy_data(wave_numbers, intensities, target_wave_numbers):
+
+    # Linear interpolation for resampling. TODO: assess what should be user parameters
+    interp_func = interp1d(wave_numbers, intensities, kind='linear', bounds_error=False, fill_value="extrapolate")
+
+    # Apply the interpolation function to the target wave numbers
+    resampled_intensities = interp_func(target_wave_numbers)
+
+    return resampled_intensities
+
+def getWNSteps(min,max,size):
+    #return np.arange(min, max + size, size)  #check this is right
+    return np.arange(min, max, size)
+def interpolateWN(data,wn_inds, wn, wn_order,desired_min, desired_max,desired_step_size):
+
+    #assumes that only data for wn are being given to this function.
+    #tolerant of desc/asc ordering, but needs to be consistent and consecutive.
+
     data = deepcopy(data)
+
+    data_wn = data.iloc[:, wn_inds]
+
+    target_wave_numbers = getWNSteps(desired_min, desired_max, desired_step_size)
+
+    if wn_order == "desc":
+        wn.reverse()
+
+    outwn = [resample_spectroscopy_data(wn, data_wn.iloc[[i]].to_numpy()[:,::-1] if wn_order=="desc" else data_wn.iloc[[i]].to_numpy(), target_wave_numbers) for i in range(data_wn.shape[0])]
+
+    return pd.concat([data.iloc[:,:min(wn_inds)],pd.DataFrame(np.vstack(outwn),columns=[f'{WN_MATCH}{i}' for i in target_wave_numbers])],axis=1)
+
+# Training Mode with Hyperband 
+def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, seed_value=42):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
 
-    #first thing is format data into internal predictable ordering.
-    wn_ordered,wn_min,wn_step,wn_max,wn_inds = wnExtract(data)
+    if isinstance(data,list):
 
-    formatted_data,wn_inds = formatData(data,total_bio_columns,wn_ordered,wn_min,wn_step,wn_max,wn_inds)
+        if interp_minmaxstep is None:
+
+            #identify ranges from the source data
+            interp_min = []
+            interp_max = []
+            interp_step_size = []
+
+            for dataset in data:
+                # required to not have side effects on the original data object
+                dataset = deepcopy(dataset)
+
+                wn_order,wn_array,wn_min,wn_step,wn_max,wn_inds = wnExtract(dataset)
+
+                interp_min.append(wn_min)
+                interp_max.append(wn_max)
+                interp_step_size.append(wn_step)
+
+            interp_min = min(interp_min)
+            interp_max = max(interp_max)
+            inter_step_size = min(interp_step_size)
+        else:
+            interp_min,interp_max,interp_step_size = interp_minmaxstep
+
+        #interpolate each dataset:
+        standardized_wn_data = []
+
+        for dataset in data:
+
+            wn_order,wn_array,wn_min,wn_step,wn_max,wn_inds = wnExtract(dataset) #mildly inneffecient to call again
+            standardized_wn_data.append(interpolateWN(dataset,wn_inds,wn_array,wn_order, wn_min, wn_step, wn_max, interp_min, interp_max,interp_step_size))
+
+        data = pd.concat(standardized_wn_data, axis = 0, join='outer')
+
+    else:
+
+        wn_order, wn_array, interp_min, interp_step_size, interp_max, wn_inds = wnExtract(data)
+        wn_start = min(wn_inds)
+
+        data = interpolateWN(data, wn_inds,wn_array,wn_order, interp_min, interp_max,interp_step_size)
+
+    steps_num = len(getWNSteps(interp_min, interp_max , interp_step_size))
+
+    data.to_csv("test.csv")
+    import code
+    code.interact(local=dict(globals(), **locals()))
+
+    #now at this point, we have either a single pd data object with standardized wn and unanalyzed other bio/informational columns. We know the # of wn steps, and so can differentiate
+    #the wn and biological data by index.
+
+    if not SPLITNAME in data and splitvec is None:
+        raise ValueError(f"Either a column of name: {SPLITNAME} or an argument of type [x,y], where x-0 = train %, x-y = val %, and 100-y = test % must be provided")
+    elif splitvec is not None:
+        import code
+        code.interact(local=dict(globals(), **locals()))
+
+    if extra_bio_columns is not None and total_bio_columns is not None:
+        raise ValueError("cannot specify both extra_bio_columns and total_bio_columns")
+    elif extra_bio_columns is not None:
+        total_bio_columns = len(data.columns) - wn_start - 1 + extra_bio_columns # check that's right
+
+    formatted_data, wn_inds = formatData(data, total_bio_columns, wn_ordered, wn_min, wn_step, wn_max, wn_inds)
     wn_start = min(wn_inds)
 
-    formatted_data = interpolateWN(data,wn_start,wn_min,wn_step,wn_max,desired_min,desired_max,desired_step)
+    interpolated_data = interpolateWN(data,wn_start,wn_min,wn_step,wn_max,interp_min,interp_max,inter_step_size)
 
-    formatted_data = preprocess_spectra(formatted_data, filter_type=filter_CHOICE,wn_start,len(formatted_data.columns))
+
+    formatted_data = preprocess_spectra(formatted_data, filter_CHOICE,wn_start,len(formatted_data.columns))
 
     scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
     formatted_data, scaler_x, scaler_y = apply_scaling(formatted_data, scaling_method)
 
     #unhardcode, here is where I add in extra columns bio columns: not sure quite yet if it should be total or extra, both are inconvenient for different reasons.
-    input_dim_A = data.columns[3:100].shape[0] #formatted_data bounded to right by wn_start, minus informational or reponse
+    input_dim_A = total_bio_columns - len(data.columns.difference(INFORMATIONAL + RESPONSE_COLUMNS))
     input_dim_B = data.columns[100:1100].shape[0] #formatted_data to bounded to left by wn_start
     
     def model_builder(hp):
@@ -490,13 +598,13 @@ def TrainingModeWithHyperband(data: pd.DataFrame, filter_CHOICE, scaling_CHOICE,
     return training_outputs, {}
 
 # Training Mode without Hyperband
-def TrainingModeWithoutHyperband(data: pd.DataFrame, filter_CHOICE, scaling_CHOICE, model_parameters, total_bio_columns=100, seed_value=42):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
+def TrainingModeWithoutHyperband(data: pd.DataFrame, filter_CHOICE, scaling_CHOICE, model_parameters, total_bio_columns=100, splitvec = None, seed_value=42):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
 
     if len(model_parameters) != 8:
         raise ValueError("model_parameters must be a list of 8 values.")
@@ -615,9 +723,6 @@ def preprocess_spectra(data, filter_type='savgol',wn_ind_start=100,wn_ind_end=11
     }
     
     filter_func = filter_functions.get(filter_type, savgol_filter_func)
-
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
 
     data.loc[:, data.columns[wn_ind_start:wn_ind_end]] = filter_func(data.loc[:, data.columns[wn_ind_start:wn_ind_end]].values)
 

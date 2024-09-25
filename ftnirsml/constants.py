@@ -17,7 +17,7 @@
 #steps: order new data alphabetically. Store metadata on columns, in order, as well as any nullified. Add a masking
 #layer to the archetectures and make sure things are still working.
 
-WN_MATCH = 'wavenumber_'
+WN_MATCH = 'wn'
 WN_STRING_NAME = f'{WN_MATCH}**'
 
 IDNAME = "id"
