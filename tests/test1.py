@@ -15,7 +15,8 @@ sns.set(style="whitegrid", font_scale=2)
 def main():
     print("running!")
 
-    filepath='./Data/AFSC_data_sample_trunc.csv'
+    #filepath='./Data/NWFSC_data_sample_trunc.csv'
+    filepath = './Data/AFSC_data_sample_trunc.csv'
     data = pd.read_csv(filepath)
 
     training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(

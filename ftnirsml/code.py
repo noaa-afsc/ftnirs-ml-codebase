@@ -437,6 +437,9 @@ def wnExtract(data):
 
     wn_array = [float(c[len(WN_MATCH):]) for c in data if WN_MATCH in c]
 
+    if(len(wn_array)==0):
+        return None, None, None, None, None, None
+
     wn_min = min(wn_array)
     wn_max = max(wn_array)
 
@@ -459,8 +462,7 @@ def resample_spectroscopy_data(wave_numbers, intensities, target_wave_numbers):
     return resampled_intensities
 
 def getWNSteps(min,max,size):
-    #return np.arange(min, max + size, size)  #check this is right
-    return np.arange(min, max, size)
+    return np.arange(min, max + size, size)
 def interpolateWN(data,wn_inds, wn, wn_order,desired_min, desired_max,desired_step_size):
 
     #assumes that only data for wn are being given to this function.
@@ -477,13 +479,16 @@ def interpolateWN(data,wn_inds, wn, wn_order,desired_min, desired_max,desired_st
 
     outwn = [resample_spectroscopy_data(wn, data_wn.iloc[[i]].to_numpy()[:,::-1] if wn_order=="desc" else data_wn.iloc[[i]].to_numpy(), target_wave_numbers) for i in range(data_wn.shape[0])]
 
-    return pd.concat([data.iloc[:,:min(wn_inds)],pd.DataFrame(np.vstack(outwn),columns=[f'{WN_MATCH}{i}' for i in target_wave_numbers])],axis=1)
+    #best, I think, if we just delete the wn columns, then append them to right here. That will be most consistent for later easier assumptions.
 
-# Training Mode with Hyperband 
-def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, seed_value=42):
+    data_no_wn = data.drop(data.columns[wn_inds],axis=1) #delete all previous wn
 
-    np.random.seed(seed_value)
-    tf.random.set_seed(seed_value)
+    return pd.concat([data_no_wn,pd.DataFrame(np.vstack(outwn),columns=[f'{WN_MATCH}{i}' for i in target_wave_numbers])],axis=1) #stick new wn onto the right
+
+#this function will take either a list of datasets or a single dataset, apply interoploation (either automated or predefined)
+#and export a single dataset with standard interpolation and all other original columns included.
+#requires that the wave number columns are named with the following pattern: [WN_MATCH][wav_num]. The wav numbers must be consecutive.
+def standardize_data(data,interp_minmaxstep = None):
 
     if isinstance(data,list):
 
@@ -506,7 +511,7 @@ def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_col
 
             interp_min = min(interp_min)
             interp_max = max(interp_max)
-            inter_step_size = min(interp_step_size)
+            interp_step_size = min(interp_step_size)
         else:
             interp_min,interp_max,interp_step_size = interp_minmaxstep
 
@@ -519,15 +524,38 @@ def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_col
             standardized_wn_data.append(interpolateWN(dataset,wn_inds,wn_array,wn_order, wn_min, wn_step, wn_max, interp_min, interp_max,interp_step_size))
 
         data = pd.concat(standardized_wn_data, axis = 0, join='outer')
+        _, _, _, _, _, wn_inds = wnExtract(data) #get the final inds for the resulting data, which also contains additional biological columns.
 
     else:
 
-        wn_order, wn_array, interp_min, interp_step_size, interp_max, wn_inds = wnExtract(data)
-        wn_start = min(wn_inds)
+        wn_order, wn_array, wn_min, wn_step_size, wn_max, wn_inds = wnExtract(data)
 
-        data = interpolateWN(data, wn_inds,wn_array,wn_order, interp_min, interp_max,interp_step_size)
+        if interp_minmaxstep is None:
+            interp_min = wn_min
+            interp_max = wn_max
+            interp_step_size = wn_step_size
+        else:
+            interp_min, interp_max, interp_step_size = interp_minmaxstep
 
-    steps_num = len(getWNSteps(interp_min, interp_max , interp_step_size))
+        if wn_order is not None:
+
+            data = interpolateWN(data, wn_inds,wn_array,wn_order, interp_min, interp_max,interp_step_size)
+            _, _, _, _, _, wn_inds = wnExtract(data)
+
+    return data, [interp_min,interp_max,interp_step_size], wn_inds
+
+
+
+# Training Mode with Hyperband 
+def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, seed_value=42):
+
+    np.random.seed(seed_value)
+    tf.random.set_seed(seed_value)
+
+    #standardize data, return the interpolation parameters (calculated automatically if None is supplied), and the indeces of the wn_inds, which can
+    #from here be assumed to be in ascending order, and corresponding to their original position. If multiple dataset were provided, a union operation
+    #was performed
+    data,interp_minmaxstep,wn_inds = standardize_data(data,interp_minmaxstep)
 
     data.to_csv("test.csv")
     import code
