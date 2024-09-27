@@ -15,14 +15,22 @@ sns.set(style="whitegrid", font_scale=2)
 def main():
     print("running!")
 
-    #filepath='./Data/NWFSC_data_sample_trunc.csv'
+    #filepath1='./Data/NWFSC_data_sample_trunc.csv'
+    #data1 = pd.read_csv(filepath1)
+    #filepath2 = './Data/AFSC_data_sample_trunc_no_wn.csv'
+    #data2 = pd.read_csv(filepath2)
+    #filepath3 = './Data/SEFSC_data_sample_trunc.csv'
+    #data3 = pd.read_csv(filepath3)
+    #data = [data1,data3]
+
     filepath = './Data/AFSC_data_sample_trunc.csv'
     data = pd.read_csv(filepath)
 
     training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
         data=data,
         filter_CHOICE='savgol',
-        scaling_CHOICE='minmax'
+        scaling_CHOICE='minmax',
+        #splitvec = [40,80]
     )
 
     training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(

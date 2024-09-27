@@ -35,7 +35,7 @@ import shap
 # Use for internal functions which rely on intermediates
 import tempfile
 
-from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME
+from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME,WN_STRING_NAME,IDNAME
 
 # Set seeds for reproducibility 
 np.random.seed(42)
@@ -509,6 +509,10 @@ def standardize_data(data,interp_minmaxstep = None):
                 interp_max.append(wn_max)
                 interp_step_size.append(wn_step)
 
+            #test for mixed types, indicating assumption error:
+            if any(isinstance(x,float) for x in interp_min) and any(x is None for x in interp_min):
+                raise ValueError(f"Datasets must either all have {WN_STRING_NAME} or all lack it, mixed datasets provided.")
+
             interp_min = min(interp_min)
             interp_max = max(interp_max)
             interp_step_size = min(interp_step_size)
@@ -521,9 +525,13 @@ def standardize_data(data,interp_minmaxstep = None):
         for dataset in data:
 
             wn_order,wn_array,wn_min,wn_step,wn_max,wn_inds = wnExtract(dataset) #mildly inneffecient to call again
-            standardized_wn_data.append(interpolateWN(dataset,wn_inds,wn_array,wn_order, wn_min, wn_step, wn_max, interp_min, interp_max,interp_step_size))
+            standardized_wn_data.append(interpolateWN(dataset,wn_inds,wn_array,wn_order, interp_min, interp_max,interp_step_size))
 
         data = pd.concat(standardized_wn_data, axis = 0, join='outer')
+        _, _, _, _, _, wn_inds = wnExtract(data)
+
+        #rearrange the final ds to make sure that the wav numbers are stuck on the right
+        data = pd.concat([data.drop(data.columns[wn_inds], axis=1),data.iloc[:, wn_inds]],axis=1)
         _, _, _, _, _, wn_inds = wnExtract(data) #get the final inds for the resulting data, which also contains additional biological columns.
 
     else:
@@ -544,10 +552,17 @@ def standardize_data(data,interp_minmaxstep = None):
 
     return data, [interp_min,interp_max,interp_step_size], wn_inds
 
+def autoOneHot(data,total_bio_columns):
 
+    #disinguish the non-wn and informational columns
+    #assess which of those is defined as categorical, expand with one-hot.
+    #assert that the resulting total # of columns is < than "total_bio_columns"
+    #tack on unnassigned columns
+    #rearrange full dataset, in order of informational, biological, wn.
+    #export information for their easier later identification by index. 
 
 # Training Mode with Hyperband 
-def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, seed_value=42):
+def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, splitvec=None, seed_value=42):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
@@ -557,29 +572,50 @@ def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_col
     #was performed
     data,interp_minmaxstep,wn_inds = standardize_data(data,interp_minmaxstep)
 
-    data.to_csv("test.csv")
-    import code
-    code.interact(local=dict(globals(), **locals()))
+    #data.to_csv("test.csv")
 
-    #now at this point, we have either a single pd data object with standardized wn and unanalyzed other bio/informational columns. We know the # of wn steps, and so can differentiate
+    #now at this point, we have either a single pd data object with standardized wn and unanalyzed other bio/informational columns. We know the # of wn steps, and can differentiate
     #the wn and biological data by index.
 
     if not SPLITNAME in data and splitvec is None:
-        raise ValueError(f"Either a column of name: {SPLITNAME} or an argument of type [x,y], where x-0 = train %, x-y = val %, and 100-y = test % must be provided")
-    elif splitvec is not None:
-        import code
-        code.interact(local=dict(globals(), **locals()))
+        raise ValueError(f"Either a column of name: {SPLITNAME} or a 'splitvec' argument of [x,y], where x-0 = train %, x-y = val %, and 100-y = test % must be provided")
+    if splitvec is not None:
+        #reassign based on operator defined splits.
+
+        data[SPLITNAME] = pd.Series(np.random.choice(a=["training","validation","test"],size=data.shape[0],p=[splitvec[0]/100,(splitvec[1]-splitvec[0])/100,1-(splitvec[1]/100)]))
+
+        split_behavior = "randomly_assigned"
+    else:
+        #test for any NA in splitname, require that if split column is included all data needs to have it present. provide outputs for splits, sourced from the data.
+
+        if data[SPLITNAME].isna().any():
+            raise ValueError(f"Data {SPLITNAME} column is only partially defined: either provide datasets with {SPLITNAME} fully defined, or specify splitvec argument")
+
+        split_behavior = "determined_from_dataset(s)"
+
+        percentages = data[SPLITNAME].value_counts(normalize=True)*100
+
+        #estimate ratio based on provided data.
+        splitvec = [np.round(percentages.get('training',0)),np.round(100- percentages.get('test', 0))]
+
+    #check ids- make sure there is an id column present, and assert that the id field does not contain duplicates.
+    if IDNAME in data:
+        if data[IDNAME].duplicated().any():
+            raise ValueError(f"Data {IDNAME} column is not globally unique")
+    else:
+        raise ValueError(f"Data must contain an {IDNAME} column to distinguish it from all other samples in dataset(s)")
 
     if extra_bio_columns is not None and total_bio_columns is not None:
         raise ValueError("cannot specify both extra_bio_columns and total_bio_columns")
     elif extra_bio_columns is not None:
-        total_bio_columns = len(data.columns) - wn_start - 1 + extra_bio_columns # check that's right
+        total_bio_columns = len(data.columns) - len(wn_inds) + extra_bio_columns # check that's right
 
-    formatted_data, wn_inds = formatData(data, total_bio_columns, wn_ordered, wn_min, wn_step, wn_max, wn_inds)
-    wn_start = min(wn_inds)
+    import code
+    code.interact(local=dict(globals(), **locals()))
 
-    interpolated_data = interpolateWN(data,wn_start,wn_min,wn_step,wn_max,interp_min,interp_max,inter_step_size)
-
+    #what does this need to do? reorder the split column back to front, add in unassigned columns.
+    #perhaps, I should do the one-hot encoding here, and make the other things be just extras that get thrown in.
+    formatted_data, wn_inds = autoOneHot(data, total_bio_columns)
 
     formatted_data = preprocess_spectra(formatted_data, filter_CHOICE,wn_start,len(formatted_data.columns))
 
@@ -761,9 +797,9 @@ def final_training_pass(model, data, nb_epoch, batch_size):
 
     earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
-    X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[3:100]]
-    X_train_wavenumbers = data.loc[data['sample'] == 'training', data.columns[100:1100]]
-    y_train = data.loc[data['sample'] == 'training', 'age']
+    X_train_biological_data = data.loc[data[SPLITNAME] == 'training', data.columns[3:100]]
+    X_train_wavenumbers = data.loc[data[SPLITNAME] == 'training', data.columns[100:1100]]
+    y_train = data.loc[data[SPLITNAME] == 'training', 'age']
 
     history = model.fit([X_train_biological_data, X_train_wavenumbers], y_train,
                         epochs=nb_epoch,
