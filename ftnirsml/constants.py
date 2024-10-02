@@ -36,7 +36,7 @@ STANDARD_COLUMN_NAMES = {IDNAME:{'data_type':'unq_text'},
         'region': {'data_type': 'categorical'},
         'fish_length': {'data_type': 'numeric'},
         'fish_weight': {'data_type': 'numeric'},
-        'otolith_weight': {'data_type': 'categorical'},
+        'otolith_weight': {'data_type': 'numeric'},
         'gear_depth': {'data_type': 'numeric'},
         'gear_temp': {'data_type': 'numeric'}
         }

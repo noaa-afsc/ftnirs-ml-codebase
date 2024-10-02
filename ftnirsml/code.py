@@ -35,7 +35,7 @@ import shap
 # Use for internal functions which rely on intermediates
 import tempfile
 
-from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME,WN_STRING_NAME,IDNAME
+from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME,WN_STRING_NAME,IDNAME,STANDARD_COLUMN_NAMES
 
 # Set seeds for reproducibility 
 np.random.seed(42)
@@ -116,36 +116,6 @@ def apply_normalization(data, columns):
     data[columns] = normalizer.fit_transform(data[columns])
     return data
 
-def apply_robust_scaling(data, feature_columns):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    scaler_y = RobustScaler()
-    data[RESPONSE_COLUMNS] = scaler_y.fit_transform(data[[RESPONSE_COLUMNS]])
-    data[feature_columns] = data[feature_columns].apply(lambda col: RobustScaler().fit_transform(col.values.reshape(-1, 1)))
-    return data, scaler_y
-
-def apply_minmax_scaling(data, feature_columns):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    scaler_y = MinMaxScaler()
-    data[RESPONSE_COLUMNS] = scaler_y.fit_transform(data[[RESPONSE_COLUMNS]])
-    data[feature_columns] = data[feature_columns].apply(lambda col: MinMaxScaler().fit_transform(col.values.reshape(-1, 1)))
-    return data, scaler_y
-
-def apply_maxabs_scaling(data, feature_columns):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    scaler_y = MaxAbsScaler()
-    data[RESPONSE_COLUMNS] = scaler_y.fit_transform(data[[RESPONSE_COLUMNS]])
-    data[feature_columns] = data[feature_columns].apply(lambda col: MaxAbsScaler().fit_transform(col.values.reshape(-1, 1)))
-    return data, scaler_y
-
 def apply_scaling(data, scaling_method='standard'):
 
     #required to not have side effects on the original data object
@@ -161,14 +131,17 @@ def apply_scaling(data, scaling_method='standard'):
     
     if scaling_method not in scalers:
         raise ValueError(f"Unsupported scaling method: {scaling_method}")
+
+    #Hmm, I will need to think about this. Scalers need to contain info about the ordering
     
     feature_columns = data.columns.difference(INFORMATIONAL + RESPONSE_COLUMNS)
+    response_columns = [m for m in RESPONSE_COLUMNS if m in data.columns]
 
-    print(feature_columns)
-    
+    print(response_columns)
+
     # Create and fit a separate scaler for the 'age' column
     scaler_y = scalers[scaling_method]()
-    data['age'] = scaler_y.fit_transform(data[['age']])
+    data[response_columns] = scaler_y.fit_transform(data[response_columns])
     
     # Create and fit a separate scaler for the feature columns
     scaler_x = scalers[scaling_method]()
@@ -228,6 +201,9 @@ def train_and_optimize_model(tuner, data, nb_epoch, batch_size):
     data = deepcopy(data)
 
     earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
+
+    import code
+    code.interact(local=dict(globals(), **locals()))
 
     X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[3:100]]
     X_train_wavenumbers = data.loc[data['sample'] == 'training', data.columns[100:1100]]
@@ -554,12 +530,58 @@ def standardize_data(data,interp_minmaxstep = None):
 
 def autoOneHot(data,total_bio_columns):
 
+    data = deepcopy(data)
+
+    _, _, _, _, _, wn_inds = wnExtract(data) #just do again to let the fxn be more indepentent
+
+    if wn_inds is None:
+        wn_inds_set = {}
+    else:
+        wn_inds_set = set(wn_inds)
+
+    inf_inds = []
+    resp_inds = []
+    biological_expanded = []
+
+    for i in (set(range(data.shape[0])) - wn_inds_set):
+        #print(data.columns[i])
+        if data.columns[i] in INFORMATIONAL:
+            inf_inds.append(i)
+        elif data.columns[i] in RESPONSE_COLUMNS:
+            resp_inds.append(i)
+        else:
+            #can assume it's biological- see if it is categorical, and if so one-hot expand.
+            if data.columns[i] in STANDARD_COLUMN_NAMES:
+                if STANDARD_COLUMN_NAMES[data.columns[i]]["data_type"] == "categorical":
+                    #expand into one hot.
+
+                    biological_expanded.append(pd.get_dummies(data[data.columns[i]],prefix=f"{data.columns[i]}_ohc").astype(int))
+
+                else:
+                    biological_expanded.append(data[data.columns[i]])
+            else:
+                biological_expanded.append(data[data.columns[i]])
+
+    bio = pd.concat(biological_expanded,axis = 1)
+
+    #check it's not bigger than max cols, and pad extra cols on.
+
+    assert bio.shape[1] <= total_bio_columns
+
+    if bio.shape[1] < total_bio_columns:
+        extra_needed = total_bio_columns - bio.shape[1]
+        padding = pd.DataFrame(-1,index=range(bio.shape[0]),columns = [f"_UNDECLARED_{m}" for m in range(extra_needed)])
+        bio = pd.concat([bio,padding], axis=1)
+
+    all = pd.concat([data.iloc[:, resp_inds],data.iloc[:, inf_inds],bio,data.iloc[:, wn_inds]],axis=1)
+
+    return all, (resp_inds,inf_inds,[inf_inds[-1] + m for m in list(range(total_bio_columns))],wn_inds)
     #disinguish the non-wn and informational columns
     #assess which of those is defined as categorical, expand with one-hot.
     #assert that the resulting total # of columns is < than "total_bio_columns"
     #tack on unnassigned columns
     #rearrange full dataset, in order of informational, biological, wn.
-    #export information for their easier later identification by index. 
+    #export information for their easier later identification by index...?
 
 # Training Mode with Hyperband 
 def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, splitvec=None, seed_value=42):
@@ -610,22 +632,19 @@ def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_col
     elif extra_bio_columns is not None:
         total_bio_columns = len(data.columns) - len(wn_inds) + extra_bio_columns # check that's right
 
-    import code
-    code.interact(local=dict(globals(), **locals()))
-
     #what does this need to do? reorder the split column back to front, add in unassigned columns.
     #perhaps, I should do the one-hot encoding here, and make the other things be just extras that get thrown in.
-    formatted_data, wn_inds = autoOneHot(data, total_bio_columns)
+    formatted_data,dt_indeces = autoOneHot(data, total_bio_columns)
 
-    formatted_data = preprocess_spectra(formatted_data, filter_CHOICE,wn_start,len(formatted_data.columns))
+    formatted_data = preprocess_spectra(formatted_data, filter_CHOICE)
 
     scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
-    formatted_data, scaler_x, scaler_y = apply_scaling(formatted_data, scaling_method)
+    formatted_data, scaler_x, scaler_y = apply_scaling(formatted_data, scaling_method) #might need to export column names, in order, for both x and y for inference and fine tune.
 
     #unhardcode, here is where I add in extra columns bio columns: not sure quite yet if it should be total or extra, both are inconvenient for different reasons.
-    input_dim_A = total_bio_columns - len(data.columns.difference(INFORMATIONAL + RESPONSE_COLUMNS))
-    input_dim_B = data.columns[100:1100].shape[0] #formatted_data to bounded to left by wn_start
-    
+    input_dim_A = total_bio_columns
+    input_dim_B = len(wn_inds)
+
     def model_builder(hp):
         return build_model(hp, input_dim_A, input_dim_B)
 
@@ -771,10 +790,12 @@ def TrainingModeFinetuning(model, data, previous_metadata, filter_CHOICE, scalin
     return training_outputs, {}
 
 # Spectra preprocessing function 
-def preprocess_spectra(data, filter_type='savgol',wn_ind_start=100,wn_ind_end=1100):
+def preprocess_spectra(data, filter_type='savgol'):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
+
+    _, _, _, _, _, wn_inds = wnExtract(data)
 
     filter_functions = {
         'savgol': savgol_filter_func,
@@ -788,7 +809,7 @@ def preprocess_spectra(data, filter_type='savgol',wn_ind_start=100,wn_ind_end=11
     
     filter_func = filter_functions.get(filter_type, savgol_filter_func)
 
-    data.loc[:, data.columns[wn_ind_start:wn_ind_end]] = filter_func(data.loc[:, data.columns[wn_ind_start:wn_ind_end]].values)
+    data.iloc[:, wn_inds] = filter_func(data.iloc[:, wn_inds].values)
 
     return data
 
