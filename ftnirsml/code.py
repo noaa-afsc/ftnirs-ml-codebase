@@ -137,8 +137,6 @@ def apply_scaling(data, scaling_method='standard'):
     feature_columns = data.columns.difference(INFORMATIONAL + RESPONSE_COLUMNS)
     response_columns = [m for m in RESPONSE_COLUMNS if m in data.columns]
 
-    print(response_columns)
-
     # Create and fit a separate scaler for the 'age' column
     scaler_y = scalers[scaling_method]()
     data[response_columns] = scaler_y.fit_transform(data[response_columns])
@@ -195,25 +193,19 @@ def build_model(hp, input_dim_A, input_dim_B):
     return model
 
 # Training, evaluation, and plotting functions
-def train_and_optimize_model(tuner, data, nb_epoch, batch_size):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
+def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_idx,wn_idx):
 
     earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
 
-    import code
-    code.interact(local=dict(globals(), **locals()))
-
-    X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[3:100]]
-    X_train_wavenumbers = data.loc[data['sample'] == 'training', data.columns[100:1100]]
-    y_train = data.loc[data['sample'] == 'training', 'age']
-
-    tuner.search([X_train_biological_data, X_train_wavenumbers], y_train,
+    tuner.search([data.loc[data[SPLITNAME] == 'training', data.columns[bio_idx]],
+                  data.loc[data[SPLITNAME] == 'training',data.columns[wn_idx]]],
+                  data.loc[data[SPLITNAME] == 'training', RESPONSE_COLUMNS],
                  epochs=nb_epoch,
                  batch_size=batch_size,
                  shuffle=True,
-                 validation_split=0.25,
+                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', data.columns[bio_idx]],
+                                  data.loc[data[SPLITNAME] == 'validation',data.columns[wn_idx]]],
+                                  data.loc[data[SPLITNAME] == 'validation',RESPONSE_COLUMNS]],
                  verbose=1,
                  callbacks=[earlystop])
 
@@ -232,18 +224,15 @@ def plot_training_history(history):
     plt.legend(['Train', 'Validation'], loc='upper right')
     plt.show()
 
-def evaluate_model(model, data):
+def evaluate_model(model, data, bio_idx, wn_idx):
 
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
+    bio_and_wn_data_list = [data.loc[data[SPLITNAME] == 'test', data.columns[bio_idx]], data.loc[data[SPLITNAME] == 'test', data.columns[wn_idx]]]
+    response_data  = data.loc[data[SPLITNAME] == 'test', RESPONSE_COLUMNS]
 
-    X_test_biological_data = data.loc[data['sample'] == 'test', data.columns[3:100]]
-    X_test_wavenumbers = data.loc[data['sample'] == 'test', data.columns[100:1100]]
-    y_test = data.loc[data['sample'] == 'test', 'age']
-
-    evaluation = model.evaluate([X_test_biological_data, X_test_wavenumbers], y_test)
-    preds = model.predict([X_test_biological_data, X_test_wavenumbers])
-    r2 = r2_score(y_test, preds)
+    evaluation = model.evaluate(bio_and_wn_data_list,response_data)
+    preds = model.predict(bio_and_wn_data_list)
+    #note: don't expect this to behave properly if multiple response columns are present
+    r2 = r2_score(response_data, preds)
     return evaluation, preds, r2
 
 def plot_predictions(y_test, preds):
@@ -528,7 +517,7 @@ def standardize_data(data,interp_minmaxstep = None):
 
     return data, [interp_min,interp_max,interp_step_size], wn_inds
 
-def autoOneHot(data,total_bio_columns):
+def autoOneHot(data,total_bio_columns,expand_nonstandard_str=True,NA_as_one_hot_category=True):
 
     data = deepcopy(data)
 
@@ -543,7 +532,7 @@ def autoOneHot(data,total_bio_columns):
     resp_inds = []
     biological_expanded = []
 
-    for i in (set(range(data.shape[0])) - wn_inds_set):
+    for i in (set(range(data.shape[1])) - wn_inds_set):
         #print(data.columns[i])
         if data.columns[i] in INFORMATIONAL:
             inf_inds.append(i)
@@ -553,13 +542,39 @@ def autoOneHot(data,total_bio_columns):
             #can assume it's biological- see if it is categorical, and if so one-hot expand.
             if data.columns[i] in STANDARD_COLUMN_NAMES:
                 if STANDARD_COLUMN_NAMES[data.columns[i]]["data_type"] == "categorical":
-                    #expand into one hot.
 
+                    #fill NA if present
+                    if NA_as_one_hot_category:
+                        data[data.columns[i]] = data[data.columns[i]].fillna("NA")
+
+                    #expand into one hot.
                     biological_expanded.append(pd.get_dummies(data[data.columns[i]],prefix=f"{data.columns[i]}_ohc").astype(int))
 
                 else:
+                    data[data.columns[i]] = data[data.columns[i]].fillna(-1)
                     biological_expanded.append(data[data.columns[i]])
+
+            elif data[data.columns[i]].apply(lambda x: isinstance(x,str)).any():
+
+                #if there are any NA values, replace with text so they can be expanded as their own category (may allow model to better assess effect of missing data, needs testing and possible a parameter
+                #if variable performance compared to just leaving NA data out of one-hot.
+
+                if NA_as_one_hot_category:
+                    data[data.columns[i]] = data[data.columns[i]].fillna("NA")
+
+                # if the column is a string, perform the exansion based on category names.
+                if expand_nonstandard_str:
+                    print(f"Warning: {data.columns[i]} was treated as a categorical biological variable (argument 'expand_nonstandard_str' set to true)")
+                    biological_expanded.append(pd.get_dummies(data[data.columns[i]],prefix=f"{data.columns[i]}_ohc").astype(int))
+                else:
+                    #maybe want to be an explicit 'warning', leave for later if helpful
+                    print(f"Warning: {data.columns[i]} was eliminated from the dataset (argument 'expand_nonstandard_str' set to false)")
+
             else:
+
+                #if it's not standard, or if it's not a string, assume it's numeric / integer and thus can interpret a -1 value (caution with this assumption)
+
+                data[data.columns[i]] = data[data.columns[i]].fillna(-1)
                 biological_expanded.append(data[data.columns[i]])
 
     bio = pd.concat(biological_expanded,axis = 1)
@@ -569,13 +584,26 @@ def autoOneHot(data,total_bio_columns):
     assert bio.shape[1] <= total_bio_columns
 
     if bio.shape[1] < total_bio_columns:
-        extra_needed = total_bio_columns - bio.shape[1]
-        padding = pd.DataFrame(-1,index=range(bio.shape[0]),columns = [f"_UNDECLARED_{m}" for m in range(extra_needed)])
-        bio = pd.concat([bio,padding], axis=1)
 
-    all = pd.concat([data.iloc[:, resp_inds],data.iloc[:, inf_inds],bio,data.iloc[:, wn_inds]],axis=1)
+        padding = pd.DataFrame(-1,index=range(bio.shape[0]),columns = [f"_UNDECLARED_{m}" for m in range(bio.shape[1]+1,total_bio_columns+1)])
 
-    return all, (resp_inds,inf_inds,[inf_inds[-1] + m for m in list(range(total_bio_columns))],wn_inds)
+        bio.reset_index(drop=True, inplace=True)
+        padding.reset_index(drop=True, inplace=True)
+
+        bio = pd.concat([bio, padding], axis=1)
+
+    responsedat = data.iloc[:, resp_inds]
+    responsedat.reset_index(drop=True, inplace=True)
+
+    infdat = data.iloc[:, inf_inds]
+    infdat.reset_index(drop=True, inplace=True)
+
+    wn_dat = data.iloc[:, wn_inds]
+    wn_dat.reset_index(drop=True, inplace=True)
+
+    all = pd.concat([responsedat,infdat,bio,wn_dat],axis=1)
+
+    return all, (resp_inds,inf_inds,[len(resp_inds+inf_inds) + m for m in list(range(total_bio_columns))],[m + (len(resp_inds+inf_inds)+total_bio_columns) for m in range(len(wn_inds))])
     #disinguish the non-wn and informational columns
     #assess which of those is defined as categorical, expand with one-hot.
     #assert that the resulting total # of columns is < than "total_bio_columns"
@@ -632,14 +660,14 @@ def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_col
     elif extra_bio_columns is not None:
         total_bio_columns = len(data.columns) - len(wn_inds) + extra_bio_columns # check that's right
 
-    #what does this need to do? reorder the split column back to front, add in unassigned columns.
-    #perhaps, I should do the one-hot encoding here, and make the other things be just extras that get thrown in.
-    formatted_data,dt_indeces = autoOneHot(data, total_bio_columns)
+    #Also require string bio columns to be marked as categorical, and have the same one-hot behavior applied
+    #(maybe that's an optional behavior, alternative behavior would be to include extra columns as simply informational?)
+    data,dt_indeces = autoOneHot(data, total_bio_columns)
 
-    formatted_data = preprocess_spectra(formatted_data, filter_CHOICE)
+    data = preprocess_spectra(data, filter_CHOICE)
 
     scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
-    formatted_data, scaler_x, scaler_y = apply_scaling(formatted_data, scaling_method) #might need to export column names, in order, for both x and y for inference and fine tune.
+    formatted_data, scaler_x, scaler_y = apply_scaling(data, scaling_method) #might need to export column names, in order, for both x and y for inference and fine tune.
 
     #unhardcode, here is where I add in extra columns bio columns: not sure quite yet if it should be total or extra, both are inconvenient for different reasons.
     input_dim_A = total_bio_columns
@@ -660,13 +688,17 @@ def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_col
 
         nb_epoch = 1
         batch_size = 32
-        model, best_hp = train_and_optimize_model(tuner, data, nb_epoch, batch_size)
-        history = final_training_pass(model, data, nb_epoch, batch_size)
-    
-    evaluation, preds, r2 = evaluate_model(model, data)
+        model, best_hp = train_and_optimize_model(tuner, data, nb_epoch, batch_size, dt_indeces[2], dt_indeces[3])
+        history = final_training_pass(model, data, nb_epoch, batch_size, dt_indeces[2], dt_indeces[3])
+
+    evaluation, preds, r2 = evaluate_model(model, data, dt_indeces[2], dt_indeces[3])
+
+    import code
+    code.interact(local=dict(globals(), **locals()))
     
     model.summary()
-    
+
+    #TODO: ordered names of columns for both scalers needed as outputs
     training_outputs = {
         'trained_model': model,
         'scaler_x': scaler_x,
@@ -814,24 +846,23 @@ def preprocess_spectra(data, filter_type='savgol'):
     return data
 
 # Final training pass function
-def final_training_pass(model, data, nb_epoch, batch_size):
+def final_training_pass(model, data, nb_epoch, batch_size,bio_idx,wn_idx):
 
     earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
-    X_train_biological_data = data.loc[data[SPLITNAME] == 'training', data.columns[3:100]]
-    X_train_wavenumbers = data.loc[data[SPLITNAME] == 'training', data.columns[100:1100]]
-    y_train = data.loc[data[SPLITNAME] == 'training', 'age']
-
-    history = model.fit([X_train_biological_data, X_train_wavenumbers], y_train,
-                        epochs=nb_epoch,
-                        batch_size=batch_size,
-                        shuffle=True,
-                        validation_split=0.25,
-                        verbose=1,
-                        callbacks=[earlystop]).history
+    history = model.fit([data.loc[data[SPLITNAME] == 'training', data.columns[bio_idx]],
+                  data.loc[data[SPLITNAME] == 'training', data.columns[wn_idx]]],
+                 data.loc[data[SPLITNAME] == 'training', RESPONSE_COLUMNS],
+                 epochs=nb_epoch,
+                 batch_size=batch_size,
+                 shuffle=True,
+                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', data.columns[bio_idx]],
+                                   data.loc[data[SPLITNAME] == 'validation', data.columns[wn_idx]]],
+                                  data.loc[data[SPLITNAME] == 'validation', RESPONSE_COLUMNS]],
+                 verbose=1,
+                 callbacks=[earlystop]).history
     
     return history
-
 
 # will  write if given a dirpath, otherwise will export the zipfile as in memory io object.
 # not the prettiest behavior, open to suggestion.
@@ -1019,10 +1050,3 @@ def explain_model_predictions(model, X_test_biological, X_test_wavenumbers):
     shap_values = explainer.shap_values([X_test_biological, X_test_wavenumbers])
     shap.summary_plot(shap_values, X_test_biological)
 
-def analyze_dataset(data):
-
-    #classify and provide indeces for components of ds.
-
-
-
-    return indeces,wave_min,wav_max,wav_step

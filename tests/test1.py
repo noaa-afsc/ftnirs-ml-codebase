@@ -15,16 +15,16 @@ sns.set(style="whitegrid", font_scale=2)
 def main():
     print("running!")
 
-    #filepath1='./Data/NWFSC_data_sample_trunc.csv'
-    #data1 = pd.read_csv(filepath1)
-    #filepath2 = './Data/AFSC_data_sample_trunc_no_wn.csv'
-    #data2 = pd.read_csv(filepath2)
-    #filepath3 = './Data/SEFSC_data_sample_trunc.csv'
-    #data3 = pd.read_csv(filepath3)
-    #data = [data1,data3]
+    filepath1='./Data/NWFSC_data_sample_trunc.csv'
+    data1 = pd.read_csv(filepath1)
+    filepath2 = './Data/AFSC_data_sample_trunc.csv'
+    data2 = pd.read_csv(filepath2)
+    filepath3 = './Data/SEFSC_data_sample_trunc.csv'
+    data3 = pd.read_csv(filepath3)
+    data = [data1,data2,data3]
 
-    filepath = './Data/NWFSC_data_sample_trunc.csv'
-    data = pd.read_csv(filepath)
+    #filepath = './Data/SEFSC_data_sample_trunc.csv'
+    #data = pd.read_csv(filepath)
 
     training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
         data=data,
@@ -32,6 +32,9 @@ def main():
         scaling_CHOICE='minmax',
         splitvec = [40,80]
     )
+
+    import code
+    code.interact(local=dict(globals(), **locals()))
 
     training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
         data=data,
