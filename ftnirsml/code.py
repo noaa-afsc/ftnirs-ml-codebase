@@ -8,6 +8,8 @@ import base64
 import os
 import io
 import zipfile
+import warnings
+import hashlib
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, Normalizer, RobustScaler, MaxAbsScaler
 from matplotlib import pyplot as plt
@@ -132,20 +134,18 @@ def apply_scaling(data, scaling_method='standard'):
     if scaling_method not in scalers:
         raise ValueError(f"Unsupported scaling method: {scaling_method}")
 
-    #Hmm, I will need to think about this. Scalers need to contain info about the ordering
-    
     feature_columns = data.columns.difference(INFORMATIONAL + RESPONSE_COLUMNS)
     response_columns = [m for m in RESPONSE_COLUMNS if m in data.columns]
 
-    # Create and fit a separate scaler for the 'age' column
-    scaler_y = scalers[scaling_method]()
-    data[response_columns] = scaler_y.fit_transform(data[response_columns])
-    
     # Create and fit a separate scaler for the feature columns
     scaler_x = scalers[scaling_method]()
     data[feature_columns] = scaler_x.fit_transform(data[feature_columns])
+
+    # Create and fit a separate scaler for the response columns
+    scaler_y = scalers[scaling_method]()
+    data[response_columns] = scaler_y.fit_transform(data[response_columns])
     
-    return data, scaler_x, scaler_y
+    return data, scaler_x, feature_columns, scaler_y, response_columns
 
 # Model-building functions
 def build_model(hp, input_dim_A, input_dim_B):
@@ -362,45 +362,60 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
     return model
 
 # Inference function 
-def InferenceMode(model_or_path, data, scaler_y=None, scaler_x=None):
+def InferenceMode(model, data, pad_missing = True, wn_interp = False, scaler_y=None, scaler_x=None):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
 
-    if isinstance(model_or_path, str):
-        # Load model from disk
-        model = load_model(model_or_path)
-    else:
-        # Use the provided model object
-        model = model_or_path
-
     feature_columns = data.columns.difference(INFORMATIONAL+RESPONSE_COLUMNS)
 
-    #print(scaler_x)
+    #the thing to address here is: what do we do if data provided to inference lacks all the data used to train?
+    #for now, will be controlled by pad_missing...
+
+    bio_features = [x for x in scaler_x['columns'] if WN_MATCH not in x]
+    wn_features = scaler_x['columns'].difference(bio_features)
+
+    #check if any bio features are missing
+    if not all([x in feature_columns for x in bio_features]):
+        if pad_missing:
+            data[[col for col in bio_features if col not in feature_columns]] = -1
+        else:
+            raise ValueError(f"The dataset provided to inference is missing one or more bio feature columns and pad_missing has been set to false")
+
+    # the other thing to check will be to ensure that the wn are equivalent, or need to be resampled. Default to not do this on the fly for more transparent behaviors.
+    if not all([x in feature_columns for x in wn_features]):
+        if wn_interp:
+
+            #get min/max/step from model feature columns names
+            _, _, wn_min, step, wn_max, _ = wnExtract(wn_features)
+
+            data = standardize_data(data,[wn_min,wn_max,step])
+        else:
+            raise ValueError(
+            f"The dataset provided to inference is not of equivalent wavenumber to the model and wn_interp has been set to false")
 
     # Apply the same scaling used during training
     if scaler_x:
-        data[feature_columns] = scaler_x.transform(data[feature_columns])
+        data[feature_columns] = scaler_x['object'].transform(data[feature_columns])
 
-    biological_data = data[data.columns[3:100]]
-    wavenumber_data = data[data.columns[100:1100]]
-    
     # Run inference
-    prediction = model.predict([biological_data, wavenumber_data])
+    prediction = model.predict([data[bio_features], data[wn_features]])
+
+    #TODO test that the response columns match
     
     # Inverse transform the prediction to the original scale
     if scaler_y:
-        prediction = scaler_y.inverse_transform(prediction)
+        prediction = scaler_y['object'].inverse_transform(prediction)
     
     return prediction
 
-def wnExtract(data):
+def wnExtract(data_columns):
 
     #rely on naming convention
 
-    wn_inds = [i for i, x in enumerate(WN_MATCH in c for c in data) if x]
+    wn_inds = [i for i, x in enumerate(WN_MATCH in c for c in data_columns) if x]
 
-    wn_array = [float(c[len(WN_MATCH):]) for c in data if WN_MATCH in c]
+    wn_array = [float(c[len(WN_MATCH):]) for c in data_columns if WN_MATCH in c]
 
     if(len(wn_array)==0):
         return None, None, None, None, None, None
@@ -468,7 +483,7 @@ def standardize_data(data,interp_minmaxstep = None):
                 # required to not have side effects on the original data object
                 dataset = deepcopy(dataset)
 
-                wn_order,wn_array,wn_min,wn_step,wn_max,wn_inds = wnExtract(dataset)
+                wn_order,wn_array,wn_min,wn_step,wn_max,wn_inds = wnExtract(dataset.columns)
 
                 interp_min.append(wn_min)
                 interp_max.append(wn_max)
@@ -489,19 +504,19 @@ def standardize_data(data,interp_minmaxstep = None):
 
         for dataset in data:
 
-            wn_order,wn_array,wn_min,wn_step,wn_max,wn_inds = wnExtract(dataset) #mildly inneffecient to call again
+            wn_order,wn_array,wn_min,wn_step,wn_max,wn_inds = wnExtract(dataset.columns) #mildly inneffecient to call again
             standardized_wn_data.append(interpolateWN(dataset,wn_inds,wn_array,wn_order, interp_min, interp_max,interp_step_size))
 
         data = pd.concat(standardized_wn_data, axis = 0, join='outer')
-        _, _, _, _, _, wn_inds = wnExtract(data)
+        _, _, _, _, _, wn_inds = wnExtract(data.columns)
 
         #rearrange the final ds to make sure that the wav numbers are stuck on the right
         data = pd.concat([data.drop(data.columns[wn_inds], axis=1),data.iloc[:, wn_inds]],axis=1)
-        _, _, _, _, _, wn_inds = wnExtract(data) #get the final inds for the resulting data, which also contains additional biological columns.
+        _, _, _, _, _, wn_inds = wnExtract(data.columns) #get the final inds for the resulting data, which also contains additional biological columns.
 
     else:
 
-        wn_order, wn_array, wn_min, wn_step_size, wn_max, wn_inds = wnExtract(data)
+        wn_order, wn_array, wn_min, wn_step_size, wn_max, wn_inds = wnExtract(data.columns)
 
         if interp_minmaxstep is None:
             interp_min = wn_min
@@ -513,7 +528,7 @@ def standardize_data(data,interp_minmaxstep = None):
         if wn_order is not None:
 
             data = interpolateWN(data, wn_inds,wn_array,wn_order, interp_min, interp_max,interp_step_size)
-            _, _, _, _, _, wn_inds = wnExtract(data)
+            _, _, _, _, _, wn_inds = wnExtract(data.columns)
 
     return data, [interp_min,interp_max,interp_step_size], wn_inds
 
@@ -521,7 +536,7 @@ def autoOneHot(data,total_bio_columns,expand_nonstandard_str=True,NA_as_one_hot_
 
     data = deepcopy(data)
 
-    _, _, _, _, _, wn_inds = wnExtract(data) #just do again to let the fxn be more indepentent
+    _, _, _, _, _, wn_inds = wnExtract(data.columns) #just do again to let the fxn be more indepentent
 
     if wn_inds is None:
         wn_inds_set = {}
@@ -564,11 +579,11 @@ def autoOneHot(data,total_bio_columns,expand_nonstandard_str=True,NA_as_one_hot_
 
                 # if the column is a string, perform the exansion based on category names.
                 if expand_nonstandard_str:
-                    print(f"Warning: {data.columns[i]} was treated as a categorical biological variable (argument 'expand_nonstandard_str' set to true)")
+                    warnings.warn(f"{data.columns[i]} was treated as a categorical biological variable (argument 'expand_nonstandard_str' set to true)")
                     biological_expanded.append(pd.get_dummies(data[data.columns[i]],prefix=f"{data.columns[i]}_ohc").astype(int))
                 else:
                     #maybe want to be an explicit 'warning', leave for later if helpful
-                    print(f"Warning: {data.columns[i]} was eliminated from the dataset (argument 'expand_nonstandard_str' set to false)")
+                    warnings.warn(f"{data.columns[i]} was eliminated from the dataset (argument 'expand_nonstandard_str' set to false)")
 
             else:
 
@@ -611,21 +626,32 @@ def autoOneHot(data,total_bio_columns,expand_nonstandard_str=True,NA_as_one_hot_
     #rearrange full dataset, in order of informational, biological, wn.
     #export information for their easier later identification by index...?
 
-# Training Mode with Hyperband 
-def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, splitvec=None, seed_value=42):
+def hash_dataset(data: pd.DataFrame) -> str:
+
+    data = deepcopy(data)
+
+    # Sort columns and rows to ignore order
+    data = data.sort_index(axis=1).sort_values(by=data.columns.tolist()).reset_index(drop=True)
+
+    # Convert to a string representation
+    data_string = data.to_string(index=False, header=False)
+
+    # Generate a hash from the string
+    data_hash = hashlib.md5(data_string.encode()).hexdigest()
+
+    return data_hash
+
+def format_data(data,filter_CHOICE=None,scaling_CHOICE=None,splitvec=None, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, seed_value=42):
+    data = deepcopy(data)
 
     np.random.seed(seed_value)
-    tf.random.set_seed(seed_value)
 
-    #standardize data, return the interpolation parameters (calculated automatically if None is supplied), and the indeces of the wn_inds, which can
-    #from here be assumed to be in ascending order, and corresponding to their original position. If multiple dataset were provided, a union operation
-    #was performed
+    og_data_hashes = [hash_dataset(i) for i in data]
+
+    # standardize data, return the interpolation parameters (calculated automatically if None is supplied), and the indices of the wn_inds, which can
+    # from here be assumed to be in ascending order, and corresponding to their original position. If multiple dataset were provided, a union operation
+    # was performed
     data,interp_minmaxstep,wn_inds = standardize_data(data,interp_minmaxstep)
-
-    #data.to_csv("test.csv")
-
-    #now at this point, we have either a single pd data object with standardized wn and unanalyzed other bio/informational columns. We know the # of wn steps, and can differentiate
-    #the wn and biological data by index.
 
     if not SPLITNAME in data and splitvec is None:
         raise ValueError(f"Either a column of name: {SPLITNAME} or a 'splitvec' argument of [x,y], where x-0 = train %, x-y = val %, and 100-y = test % must be provided")
@@ -662,16 +688,26 @@ def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_col
 
     #Also require string bio columns to be marked as categorical, and have the same one-hot behavior applied
     #(maybe that's an optional behavior, alternative behavior would be to include extra columns as simply informational?)
-    data,dt_indeces = autoOneHot(data, total_bio_columns)
+    data,dt_indices = autoOneHot(data, total_bio_columns)
 
     data = preprocess_spectra(data, filter_CHOICE)
 
     scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
-    formatted_data, scaler_x, scaler_y = apply_scaling(data, scaling_method) #might need to export column names, in order, for both x and y for inference and fine tune.
+    formatted_data, scaler_x, x_cols, scaler_y, y_cols = apply_scaling(data, scaling_method) #will need to export column names, in order, for both x and y for inference and fine tune.
 
-    #unhardcode, here is where I add in extra columns bio columns: not sure quite yet if it should be total or extra, both are inconvenient for different reasons.
-    input_dim_A = total_bio_columns
-    input_dim_B = len(wn_inds)
+    metadata = {"scalers":{"x":{"object":scaler_x,"columns":x_cols},"y":{'object':scaler_y,"columns":y_cols}},"splits":{"vec":splitvec,"origination":split_behavior},
+                "datatype_indices":{"response_indices":dt_indices[0],"informational_indices":dt_indices[1],"bio_indices":dt_indices[2],"wn_indices":dt_indices[3]}}
+
+    return formatted_data,metadata,og_data_hashes
+
+# Training Mode with Hyperband 
+def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx, max_epochs=35, batch_size = 32, seed_value=42):
+
+    np.random.seed(seed_value)
+    tf.random.set_seed(seed_value)
+
+    input_dim_A = len(bio_idx)
+    input_dim_B = len(wn_idx)
 
     def model_builder(hp):
         return build_model(hp, input_dim_A, input_dim_B)
@@ -680,63 +716,40 @@ def TrainingModeWithHyperband(data, filter_CHOICE, scaling_CHOICE, total_bio_col
         tuner = Hyperband(
             model_builder,
             objective='val_loss',
-            max_epochs=1,
+            max_epochs=max_epochs,
             directory=tmpdir,
             project_name='mmcnn',
-            seed=42
+            seed=seed_value
         )
 
-        nb_epoch = 1
-        batch_size = 32
-        model, best_hp = train_and_optimize_model(tuner, data, nb_epoch, batch_size, dt_indeces[2], dt_indeces[3])
-        history = final_training_pass(model, data, nb_epoch, batch_size, dt_indeces[2], dt_indeces[3])
+        model, best_hp = train_and_optimize_model(tuner, data, max_epochs, batch_size, bio_idx, wn_idx)
+        history = final_training_pass(model, data, max_epochs, batch_size, bio_idx, wn_idx)
 
-    evaluation, preds, r2 = evaluate_model(model, data, dt_indeces[2], dt_indeces[3])
+    evaluation, preds, r2 = evaluate_model(model, data, bio_idx, wn_idx)
 
-    import code
-    code.interact(local=dict(globals(), **locals()))
-    
     model.summary()
 
-    #TODO: ordered names of columns for both scalers needed as outputs
     training_outputs = {
         'trained_model': model,
-        'scaler_x': scaler_x,
-        'scaler_y': scaler_y,
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
         'r2_score': r2,
-        'column_names': data.columns
+        'col_data': {'column_names':data.columns,'bio_idx':bio_idx, 'wn_idx':wn_idx}
     }
 
-    return training_outputs, {}
+    #could return top 3 in extra outputs, etc.
+    return training_outputs, {best_hp}
 
 # Training Mode without Hyperband
-def TrainingModeWithoutHyperband(data: pd.DataFrame, filter_CHOICE, scaling_CHOICE, model_parameters, total_bio_columns=100, splitvec = None, seed_value=42):
+def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35, batch_size = 32, seed_value=42, \
+                                 num_conv_layers = 2, kernel_size = 101, stride_size = 51, dropout_rate = 0.1, use_max_pooling = False, num_filters = 50, dense_units = 256, dropout_rate_2 = 0.1):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
 
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    if len(model_parameters) != 8:
-        raise ValueError("model_parameters must be a list of 8 values.")
-    
-    num_conv_layers, kernel_size, stride_size, dropout_rate, use_max_pooling, num_filters, dense_units, dropout_rate_2 = model_parameters
-    
-    if not all(isinstance(param, (int, float, bool)) for param in model_parameters):
-        raise ValueError("All model parameters must be either int, float, or bool.")
-    
-    data = preprocess_spectra(data, filter_type=filter_CHOICE)
-    
-    scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
-    data, scaler_x, scaler_y = apply_scaling(data, scaling_method)
-
-    #unhardcode, add extra columns.
-    input_dim_A = 97  # Columns 3-100
-    input_dim_B = sum([WN_MATCH in c for c in data])
+    input_dim_A = len(bio_idx)
+    input_dim_B = len(wn_idx)
 
     model = build_model_manual(
         input_dim_A,
@@ -750,25 +763,21 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, filter_CHOICE, scaling_CHOI
         dense_units,
         dropout_rate_2
     )
+
+    history = final_training_pass(model, data, epochs, batch_size,bio_idx,wn_idx)
     
-    nb_epoch = 1  # !@!
-    batch_size = 32
-    history = final_training_pass(model, data, nb_epoch, batch_size)
-    
-    evaluation, preds, r2 = evaluate_model(model, data)
+    evaluation, preds, r2 = evaluate_model(model, data,bio_idx,wn_idx)
     print(f"Evaluation: {evaluation}, R2: {r2}")
     
     model.summary()
     
     training_outputs = {
         'trained_model': model,
-        'scaler_x': scaler_x,
-        'scaler_y': scaler_y,
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
         'r2_score': r2,
-        'column_names': data.columns
+        'col_data': {'column_names':data.columns,'bio_idx':bio_idx, 'wn_idx':wn_idx}
     }
     
     return training_outputs, {}
@@ -827,7 +836,7 @@ def preprocess_spectra(data, filter_type='savgol'):
     #required to not have side effects on the original data object
     data = deepcopy(data)
 
-    _, _, _, _, _, wn_inds = wnExtract(data)
+    _, _, _, _, _, wn_inds = wnExtract(data.columns)
 
     filter_functions = {
         'savgol': savgol_filter_func,

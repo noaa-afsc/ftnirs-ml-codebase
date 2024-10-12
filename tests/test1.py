@@ -1,4 +1,4 @@
-from ftnirsml.code import saveModelWithMetadata,loadModelWithMetadata,TrainingModeWithHyperband,TrainingModeWithoutHyperband,InferenceMode,TrainingModeFinetuning
+from ftnirsml.code import saveModelWithMetadata,loadModelWithMetadata,TrainingModeWithHyperband,TrainingModeWithoutHyperband,InferenceMode,TrainingModeFinetuning,format_data
 import tensorflow as tf
 import numpy as np
 import seaborn as sns
@@ -26,30 +26,33 @@ def main():
     #filepath = './Data/SEFSC_data_sample_trunc.csv'
     #data = pd.read_csv(filepath)
 
+    #artifacts: scalers and metadata for the scalers.
+    #og_data_info: identifying data back to the original dataset, like dataset hashes
+    formatted_data,format_metadata,og_data_info = format_data(data,filter_CHOICE='savgol',scaling_CHOICE='minmax',splitvec=[40,70])
+
     training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
-        data=data,
-        filter_CHOICE='savgol',
-        scaling_CHOICE='minmax',
-        splitvec = [40,80]
+        data=formatted_data,
+        bio_idx = format_metadata["datatype_indices"]["bio_indices"],
+        wn_idx = format_metadata["datatype_indices"]["wn_indices"],
+        max_epochs = 1
     )
 
-    import code
-    code.interact(local=dict(globals(), **locals()))
-
     training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
-        data=data,
-        filter_CHOICE='savgol',
-        scaling_CHOICE='minmax',
-        model_parameters=[2, 101, 51, 0.1, False, 50, 256, 0.1]
+        data=formatted_data,
+        bio_idx = format_metadata["datatype_indices"]["bio_indices"],
+        wn_idx = format_metadata["datatype_indices"]["wn_indices"]
     )
 
     model = training_outputs_manual['trained_model']
 
-    prediction1 = InferenceMode(model, data.loc[1:5], scaler_y=training_outputs_manual['scaler_y'], scaler_x=training_outputs_manual['scaler_x'])
+    prediction1 = InferenceMode(model, formatted_data.loc[1:5], scaler_y=format_metadata['scalers']['y'], scaler_x=format_metadata['scalers']['x'])
+
+    import code
+    code.interact(local=dict(globals(), **locals()))
 
     model.save("./Models/my_model.keras")
 
-    metadata = training_outputs_manual #use the training outputs as the metadata, as they contain many required fields.
+    metadata = training_outputs_manual + format_metadata #use a combination of the training outputs and the format data metadata as the metadata
     metadata["description"] = 'Very cool model, the concept came to me in a dream last night.'
 
     model_w_metadata_path = "./Models/my_model_with_metadata.keras.zip"
