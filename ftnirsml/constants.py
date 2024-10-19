@@ -46,8 +46,10 @@ RESPONSE_COLUMNS = [RESPONSENAME]
 
 #metadata fields that should be mandated by default for saving in keras.zip format after model train event:
 #for the 'original' approaches, which includes basic model and hyperband tuning model
-REQUIRED_METADATA_FIELDS_ORIGINAL = {"column_names","description","scaler_x","scaler_y"}
+REQUIRED_METADATA_FIELDS_ORIGINAL = {"description","scalers"}
 
+MISSING_DATA_VALUE = -5 #-1 used in ranges related to temperature, so -5 should be safe (w.r.t seawater)
+ONE_HOT_FLAG = '_ohc'
 #define model approach metadata. Perhaps, model approach should be an object, and this should be
 #attributes? Yeah, I think that is ok.
 TRAINING_APPROACHES = {"Basic model":{'description':"basic, customizable model",'finetunable':True},

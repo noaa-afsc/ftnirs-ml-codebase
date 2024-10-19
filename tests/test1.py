@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 import seaborn as sns
 import pandas as pd
+from copy import deepcopy
 from tensorflow.keras.models import load_model
 
 # Set seeds for reproducibility
@@ -15,20 +16,22 @@ sns.set(style="whitegrid", font_scale=2)
 def main():
     print("running!")
 
-    filepath1='./Data/NWFSC_data_sample_trunc.csv'
-    data1 = pd.read_csv(filepath1)
+    #filepath1='./Data/NWFSC_data_sample_trunc.csv'
+    #data1 = pd.read_csv(filepath1)
     filepath2 = './Data/AFSC_data_sample_trunc.csv'
     data2 = pd.read_csv(filepath2)
-    filepath3 = './Data/SEFSC_data_sample_trunc.csv'
-    data3 = pd.read_csv(filepath3)
-    data = [data1,data2,data3]
+    #filepath3 = './Data/SEFSC_data_sample_trunc.csv'
+    #data3 = pd.read_csv(filepath3)
+    #data = [data1,data2,data3]
+
+    data = pd.read_csv(filepath2)
 
     #filepath = './Data/SEFSC_data_sample_trunc.csv'
     #data = pd.read_csv(filepath)
 
     #artifacts: scalers and metadata for the scalers.
     #og_data_info: identifying data back to the original dataset, like dataset hashes
-    formatted_data,format_metadata,og_data_info = format_data(data,filter_CHOICE='savgol',scaling_CHOICE='minmax',splitvec=[40,70])
+    formatted_data,format_metadata,og_data_info = format_data(data,filter_CHOICE='savgol',scaling_x_CHOICE='minmax',scaling_y_CHOICE='minmax',splitvec=[40,70])
 
     training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
         data=formatted_data,
@@ -45,15 +48,39 @@ def main():
 
     model = training_outputs_manual['trained_model']
 
-    prediction1 = InferenceMode(model, formatted_data.loc[1:5], scaler_y=format_metadata['scalers']['y'], scaler_x=format_metadata['scalers']['x'])
+    metadata = training_outputs_manual
+
+    metadata.update(format_metadata) #use a combination of the training outputs and the format data metadata as the metadata
+    metadata["description"] = 'Very cool model, the concept came to me in a dream last night.'
+
+    #reload the data, and format with existing scalers.
+    formatted_data2,_,_ = format_data(data, filter_CHOICE=metadata['filter'], scaling_x_CHOICE=metadata['scalers']['x'],scaling_y_CHOICE=metadata['scalers']['y'], splitvec=[0, 0])
+
+    prediction1 = InferenceMode(model, formatted_data2.loc[1:5], metadata['scalers']['x'],metadata['scalers']['y'])
+
+    test_data = deepcopy(data)
+
+    #see what happens when we drop a columm (this one used in AFSC data sample, could make the test more generic
+    test_data.drop("gear_depth",axis=1,inplace=True)
+
+    formatted_data3,_,_ = format_data(test_data, filter_CHOICE=metadata['filter'], scaling_x_CHOICE=metadata['scalers']['x'],
+                                  scaling_y_CHOICE=metadata['scalers']['y'], splitvec=[0, 0])
+
+    prediction1_drop = InferenceMode(model, formatted_data3.loc[1:5], metadata['scalers']['x'],metadata['scalers']['y'])
+
+    #see what happens when I load in another dataset entirely, format it, and plug it into inference.
+
+    filepath1 = './Data/NWFSC_data_sample_trunc.csv'
+    data1 = pd.read_csv(filepath1)
+
+    #not sure if the values (bad) represent an incorrect approach or natural poor performance.
+    formatted_data1, _, _ = format_data(data1, filter_CHOICE=metadata['filter'], scaling_x_CHOICE=metadata['scalers']['x'],scaling_y_CHOICE=metadata['scalers']['y'], splitvec=[0, 0])
+    prediction1_alt = InferenceMode(model, formatted_data1.loc[1:5], metadata['scalers']['x'], metadata['scalers']['y'])
 
     import code
     code.interact(local=dict(globals(), **locals()))
 
     model.save("./Models/my_model.keras")
-
-    metadata = training_outputs_manual + format_metadata #use a combination of the training outputs and the format data metadata as the metadata
-    metadata["description"] = 'Very cool model, the concept came to me in a dream last night.'
 
     model_w_metadata_path = "./Models/my_model_with_metadata.keras.zip"
 
@@ -62,10 +89,11 @@ def main():
     model, metadata = loadModelWithMetadata(model_w_metadata_path)
 
     #try with a model trainined 1 previous time
-    prediction2 = InferenceMode(model, data.loc[1:5], scaler_y=metadata['scaler_y'], scaler_x=metadata['scaler_x']) #should be the same as 1
+    prediction2 = InferenceMode(model,formatted_data.loc[1:5], metadata['scalers']['x'],metadata['scalers']['y'],apply_x_scaler=False) #should be the same as 1
+
     assert all(prediction1 == prediction2)
 
-    training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=data,previous_metadata = metadata,
+    training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=formatted_data,previous_metadata = metadata,
                            filter_CHOICE='savgol',
                            scaling_CHOICE='maxabs',
                            seed_value=42)
