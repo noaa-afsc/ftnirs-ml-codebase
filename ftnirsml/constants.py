@@ -46,7 +46,7 @@ RESPONSE_COLUMNS = [RESPONSENAME]
 
 #metadata fields that should be mandated by default for saving in keras.zip format after model train event:
 #for the 'original' approaches, which includes basic model and hyperband tuning model
-REQUIRED_METADATA_FIELDS_ORIGINAL = {"description","scalers"}
+REQUIRED_METADATA_FIELDS_ORIGINAL = {"description","scaler"}
 
 MISSING_DATA_VALUE = -5 #-1 used in ranges related to temperature, so -5 should be safe (w.r.t seawater)
 ONE_HOT_FLAG = '_ohc'

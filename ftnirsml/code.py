@@ -11,6 +11,7 @@ import zipfile
 import warnings
 import hashlib
 
+from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, Normalizer, RobustScaler, MaxAbsScaler
 from matplotlib import pyplot as plt
 from scipy.signal import savgol_filter
@@ -118,7 +119,7 @@ def apply_normalization(data, columns):
     data[columns] = normalizer.fit_transform(data[columns])
     return data
 
-def create_scale(data,scaler,data_type):
+def create_scale(data,scaler,data_indices):
 
     scalers = {
         'standard': StandardScaler,
@@ -133,71 +134,27 @@ def create_scale(data,scaler,data_type):
 
     scaler = scalers[scaler]()
 
-    if data_type == "feature":
-        columns = [m for m in data.columns if m not in INFORMATIONAL + RESPONSE_COLUMNS]
+    columns = [m for m in data.columns if m not in INFORMATIONAL]
 
-        #inject in the value representing missing data
-        #provide missing values to scaler (use one hot flag to assume the position of one hot
-        #for the wn columns, which aren't expected to have missing data later, fill in with the median value to not influence scale
-        data.loc[len(data)] = [0 if ONE_HOT_FLAG in x else data[x].median() if WN_MATCH in x else MISSING_DATA_VALUE for x in data.columns]
+    #inject in the value representing missing data
+    #provide missing values to scaler (use one hot flag to assume the position of one hot
+    #for the wn columns, which aren't expected to have missing data later, fill in with the median value to not influence scale
+    data.loc[len(data)] = [0 if ONE_HOT_FLAG in x else data[x].median() if WN_MATCH in x else MISSING_DATA_VALUE for x in data.columns]
 
-    elif data_type == "prediction":
-        columns = [m for m in RESPONSE_COLUMNS if m in data.columns]
+    column_scaler = ColumnTransformer([(x,scaler,[x]) for x in [data.columns[m] for m in (data_indices[0]+data_indices[2])]]+[(WN_STRING_NAME,scaler,[data.columns[n] for n in data_indices[3]])],remainder='passthrough')
 
+    column_scaler.set_output(transform='pandas')
+    data = column_scaler.fit_transform(data)
 
-    data[columns] = scaler.fit_transform(data[columns])
+    #todo: above works but need to make sure to reorder to original order, should be easy with provided names
+    import code
+    code.interact(local=dict(globals(), **locals()))
+
 
     #remove the dummy row
-    if data_type == "feature":
-        data.drop(data.tail(1).index, inplace=True)
-
-    return data, {'object': scaler, "columns": columns}
-
-def scale(data, scaler='standard',data_type = "feature",fine_tune = False,missing_col=[]):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    #do the initial scale if string is provided
-    if isinstance(scaler,str):
-
-        data, scaler = create_scale(data, scaler, data_type)
-
-        #think the idea is to have the scaler rescale the values including negative 1 so it lies on the same scale...?
-
-        #so DON"T do below:
-        #set 'undeclared' back to -1. Keep the columns in the scaler to more easily operate on them later.
-        #if data_type == "feature":
-        #    data[[i for i in scaler["columns"] if '_UNDECLARED_' in i]] = -1
-
-
-    # if string not provided, is either inference or fine_tuning. apply inference flow, then fine-tuning if applicable
-    else:
-        new_features = 0
-
-        #scale existing
-        data[scaler['columns']] = scaler['object'].transform(data[scaler['columns']])
-
-        #assess new feature columns
-        if data_type == "feature":
-            data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
-            data_bio_columns = [x for x in data_feature_columns if WN_MATCH not in x]
-            model_bio_features = [x for x in scaler['columns'] if WN_MATCH not in x]
-            new_features = [x for x in data_bio_columns if x not in model_bio_features and 'UNDECLARED_' not in x]
-
-        if fine_tune and len(new_features)> 0:
-            pass
-            #consume UNDECLARED bio columns,
+    data.drop(data.tail(1).index, inplace=True)
 
     return data, scaler
-
-
-
-
-
-
-    
-
 
 # Model-building functions
 def build_model(hp, input_dim_A, input_dim_B):
@@ -644,7 +601,7 @@ def autoOneHot(data,total_bio_columns,expand_nonstandard_str=True,NA_as_one_hot_
 
     all = pd.concat([responsedat,infdat,bio,wn_dat],axis=1)
 
-    return all, (resp_inds,inf_inds,[len(resp_inds+inf_inds) + m for m in list(range(total_bio_columns))],[m + (len(resp_inds+inf_inds)+total_bio_columns) for m in range(len(wn_inds))])
+    return all, (list(range(0,len(resp_inds))),list(range(len(resp_inds),len(resp_inds+inf_inds))),[len(resp_inds+inf_inds) + m for m in list(range(total_bio_columns))],[m + (len(resp_inds+inf_inds)+total_bio_columns) for m in range(len(wn_inds))])
     #disinguish the non-wn and informational columns
     #assess which of those is defined as categorical, expand with one-hot.
     #assert that the resulting total # of columns is < than "total_bio_columns"
@@ -667,7 +624,7 @@ def hash_dataset(data: pd.DataFrame) -> str:
 
     return data_hash
 
-def format_data(data,filter_CHOICE=None,scaling_x_CHOICE=None,scaling_y_CHOICE=None,splitvec=None, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, seed_value=42,do_scale=True):
+def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, seed_value=42,add_scale=False):
     data = deepcopy(data)
     dummy_col = []
     np.random.seed(seed_value)
@@ -682,20 +639,24 @@ def format_data(data,filter_CHOICE=None,scaling_x_CHOICE=None,scaling_y_CHOICE=N
     # was performed
 
     #condition: if scaling has already been provided, look into the column values to assess if interpolation is necessary. If it is necessary, provide the values into below function.
-    if not isinstance(scaling_x_CHOICE,str) and interp_minmaxstep is None:
-        _, _, wn_min, step, wn_max, model_wn_inds = wnExtract(scaling_x_CHOICE["columns"])
+    if not isinstance(scaler,str) and interp_minmaxstep is None:
+        _, _, wn_min, step, wn_max, model_wn_inds = wnExtract(scaler["columns"])
         interp_minmaxstep = [wn_min, wn_max, step]
 
     data,interp_minmaxstep,wn_inds = standardize_data(data,interp_minmaxstep)
 
     #check that wn names are now equivalent, fix if not
-    if not isinstance(scaling_x_CHOICE, str):
+    if not isinstance(scaler, str):
 
         data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
         data_bio_columns = [x for x in data_feature_columns if WN_MATCH not in x]
 
-        model_bio_features = [x for x in scaling_x_CHOICE['columns'] if WN_MATCH not in x]
-        model_wn_features = [x for x in scaling_x_CHOICE['columns'] if x not in model_bio_features]
+        # check what need to extract for evaluating model features.
+        import code
+        code.interact(local=dict(globals(), **locals()))
+
+        model_bio_features = [x for x in scaler[0] if WN_MATCH not in x]
+        model_wn_features = scaler[-1][2]
 
         # check if the col names representing # are similar or not the same. Safe to assume at this point both are consecutive and on the right side of the ds.
         assert len(wn_inds) == len(model_wn_inds)
@@ -754,12 +715,32 @@ def format_data(data,filter_CHOICE=None,scaling_x_CHOICE=None,scaling_y_CHOICE=N
 
     data = preprocess_spectra(data, filter_CHOICE)
 
-    print([x for x in data.columns])
+    if isinstance(scaler,str):
+        data, scaler = create_scale(data, scaler, data_indices = dt_indices)
+    else:
+        new_features = 0
 
-    formatted_data, scaler_x = scale(data, scaling_x_CHOICE, data_type = "feature",missing_col=dummy_col)
-    formatted_data, scaler_y = scale(formatted_data, scaling_y_CHOICE, data_type="prediction",missing_col=dummy_col)
+        # scale existing
+        data = scaler.transform(data)
 
-    metadata = {"scalers":{"x":scaler_x,"y":scaler_y},"filter":filter_CHOICE,"splits":{"vec":splitvec,"origination":split_behavior},
+        # assess new feature columns
+        data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
+        data_bio_columns = [x for x in data_feature_columns if WN_MATCH not in x]
+
+        #check what need to extract for evaluating model features.
+        import code
+        code.interact(local=dict(globals(), **locals()))
+
+        model_bio_features = [x for x in scaler['columns'] if WN_MATCH not in x]
+        new_features = [x for x in data_bio_columns if x not in model_bio_features and 'UNDECLARED_' not in x]
+
+        if add_scale and len(new_features) > 0:
+            pass
+            # consume UNDECLARED bio columns,
+
+    formatted_data, scaler = scale(data, scaler, data_type = "feature",missing_col=dummy_col,bio_indices=dt_indices[2],wn_indeces=dt_indices[3])
+
+    metadata = {"scaler":scaler,"filter":filter_CHOICE,"splits":{"vec":splitvec,"origination":split_behavior},
                 "datatype_indices":{"response_indices":dt_indices[0],"informational_indices":dt_indices[1],"bio_indices":dt_indices[2],"wn_indices":dt_indices[3]}}
 
     return formatted_data,metadata,og_data_hashes
@@ -847,7 +828,7 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
     return training_outputs, {}
 
 # Training Mode with Fine-tuning 
-def TrainingModeFinetuning(model, data, previous_metadata, ,bio_idx,wn_idx, epochs = 35, batch_size = 32, seed_value=42):
+def TrainingModeFinetuning(model, data, previous_metadata,bio_idx,wn_idx, epochs = 35, batch_size = 32, seed_value=42):
 
     #unpack to dict if needed
     if isinstance(previous_metadata, list):

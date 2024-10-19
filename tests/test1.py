@@ -31,7 +31,7 @@ def main():
 
     #artifacts: scalers and metadata for the scalers.
     #og_data_info: identifying data back to the original dataset, like dataset hashes
-    formatted_data,format_metadata,og_data_info = format_data(data,filter_CHOICE='savgol',scaling_x_CHOICE='minmax',scaling_y_CHOICE='minmax',splitvec=[40,70])
+    formatted_data,format_metadata,og_data_info = format_data(data,filter_CHOICE='savgol',scaler='minmax',splitvec=[40,70])
 
     training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
         data=formatted_data,
@@ -54,19 +54,19 @@ def main():
     metadata["description"] = 'Very cool model, the concept came to me in a dream last night.'
 
     #reload the data, and format with existing scalers.
-    formatted_data2,_,_ = format_data(data, filter_CHOICE=metadata['filter'], scaling_x_CHOICE=metadata['scalers']['x'],scaling_y_CHOICE=metadata['scalers']['y'], splitvec=[0, 0])
+    formatted_data2,_,_ = format_data(data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
 
-    prediction1 = InferenceMode(model, formatted_data2.loc[1:5], metadata['scalers']['x'],metadata['scalers']['y'])
+    prediction1 = InferenceMode(model, formatted_data2.loc[1:5], metadata['scaler'])
 
     test_data = deepcopy(data)
 
     #see what happens when we drop a columm (this one used in AFSC data sample, could make the test more generic
     test_data.drop("gear_depth",axis=1,inplace=True)
 
-    formatted_data3,_,_ = format_data(test_data, filter_CHOICE=metadata['filter'], scaling_x_CHOICE=metadata['scalers']['x'],
-                                  scaling_y_CHOICE=metadata['scalers']['y'], splitvec=[0, 0])
+    formatted_data3,_,_ = format_data(test_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],
+                                  splitvec=[0, 0])
 
-    prediction1_drop = InferenceMode(model, formatted_data3.loc[1:5], metadata['scalers']['x'],metadata['scalers']['y'])
+    prediction1_drop = InferenceMode(model, formatted_data3.loc[1:5], metadata['scaler'])
 
     #see what happens when I load in another dataset entirely, format it, and plug it into inference.
 
@@ -74,8 +74,8 @@ def main():
     data1 = pd.read_csv(filepath1)
 
     #not sure if the values (bad) represent an incorrect approach or natural poor performance.
-    formatted_data1, _, _ = format_data(data1, filter_CHOICE=metadata['filter'], scaling_x_CHOICE=metadata['scalers']['x'],scaling_y_CHOICE=metadata['scalers']['y'], splitvec=[0, 0])
-    prediction1_alt = InferenceMode(model, formatted_data1.loc[1:5], metadata['scalers']['x'], metadata['scalers']['y'])
+    formatted_data1, _, _ = format_data(data1, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'], splitvec=[0, 0])
+    prediction1_alt = InferenceMode(model, formatted_data1.loc[1:5], metadata['scaler'])
 
     import code
     code.interact(local=dict(globals(), **locals()))
@@ -89,7 +89,7 @@ def main():
     model, metadata = loadModelWithMetadata(model_w_metadata_path)
 
     #try with a model trainined 1 previous time
-    prediction2 = InferenceMode(model,formatted_data.loc[1:5], metadata['scalers']['x'],metadata['scalers']['y'],apply_x_scaler=False) #should be the same as 1
+    prediction2 = InferenceMode(model,formatted_data.loc[1:5], metadata['scaler']) #should be the same as 1
 
     assert all(prediction1 == prediction2)
 
