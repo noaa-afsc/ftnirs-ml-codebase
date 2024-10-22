@@ -49,6 +49,8 @@ RESPONSE_COLUMNS = [RESPONSENAME]
 REQUIRED_METADATA_FIELDS_ORIGINAL = {"description","scaler"}
 
 MISSING_DATA_VALUE = -5 #-1 used in ranges related to temperature, so -5 should be safe (w.r.t seawater)
+MISSING_DATA_VALUE_UNSCALED = 0 #used for if fed directly into the model, like in undeclared case
+
 ONE_HOT_FLAG = '_ohc'
 #define model approach metadata. Perhaps, model approach should be an object, and this should be
 #attributes? Yeah, I think that is ok.

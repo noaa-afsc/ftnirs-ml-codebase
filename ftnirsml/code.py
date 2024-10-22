@@ -38,7 +38,7 @@ import shap
 # Use for internal functions which rely on intermediates
 import tempfile
 
-from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME,WN_STRING_NAME,IDNAME,STANDARD_COLUMN_NAMES,MISSING_DATA_VALUE,ONE_HOT_FLAG
+from .constants import REQUIRED_METADATA_FIELDS_ORIGINAL,WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME,WN_STRING_NAME,IDNAME,STANDARD_COLUMN_NAMES,MISSING_DATA_VALUE,ONE_HOT_FLAG,MISSING_DATA_VALUE_UNSCALED
 
 # Set seeds for reproducibility 
 np.random.seed(42)
@@ -119,42 +119,67 @@ def apply_normalization(data, columns):
     data[columns] = normalizer.fit_transform(data[columns])
     return data
 
-def create_scale(data,scaler,data_indices):
+def create_scale(data,scaler):
 
-    scalers = {
-        'standard': StandardScaler,
-        'minmax': MinMaxScaler,
-        'maxabs': MaxAbsScaler,
-        'robust': RobustScaler,
-        'normalize': Normalizer  # Note: Normalizer might not be suitable for y, use with caution
-    }
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
 
-    if scaler not in scalers:
-        raise ValueError(f"Unsupported scaling method: {scaler}")
+    if isinstance(scaler, str):
 
-    scaler = scalers[scaler]()
+        scalers = {
+            'standard': StandardScaler,
+            'minmax': MinMaxScaler,
+            'maxabs': MaxAbsScaler,
+            'robust': RobustScaler,
+            'normalize': Normalizer  # Note: Normalizer might not be suitable for y, use with caution
+        }
 
-    columns = [m for m in data.columns if m not in INFORMATIONAL]
+        # import code
+        # code.interact(local=dict(globals(), **locals()))
+
+        if scaler not in scalers:
+            raise ValueError(f"Unsupported scaling method: {scaler}")
+
+        scaler = scalers[scaler]()
+
+    #otherwise, assume the object is the correct scaler object
 
     #inject in the value representing missing data
     #provide missing values to scaler (use one hot flag to assume the position of one hot
     #for the wn columns, which aren't expected to have missing data later, fill in with the median value to not influence scale
     data.loc[len(data)] = [0 if ONE_HOT_FLAG in x else data[x].median() if WN_MATCH in x else MISSING_DATA_VALUE for x in data.columns]
 
-    column_scaler = ColumnTransformer([(x,scaler,[x]) for x in [data.columns[m] for m in (data_indices[0]+data_indices[2])]]+[(WN_STRING_NAME,scaler,[data.columns[n] for n in data_indices[3]])],remainder='passthrough')
+    #if providing data_indeces, assume that only some of the data are getting scaled (such as in first round, when changing data in place.)
+    if WN_MATCH in data.columns:
+        _, _, _, _, _, wn_inds = wnExtract(data.columns)
+        column_scaler = ColumnTransformer([(x,scaler,[x]) for x in [data.columns[m] for m in range(min(wn_inds))]]+[(WN_STRING_NAME,scaler,[data.columns[n] for n in wn_inds])])
+    else:
+        column_scaler = ColumnTransformer([(x, scaler, [x]) for x in [m for m in data.columns]])
 
     column_scaler.set_output(transform='pandas')
-    data = column_scaler.fit_transform(data)
+    column_scaler.fit(data)
 
-    #todo: above works but need to make sure to reorder to original order, should be easy with provided names
-    import code
-    code.interact(local=dict(globals(), **locals()))
-
+    #tranform and rename/reorder to fix column scaler behavior
+    data = transform(data,column_scaler)
 
     #remove the dummy row
     data.drop(data.tail(1).index, inplace=True)
 
-    return data, scaler
+    return data, [column_scaler]
+
+def transform(data,column_scaler):
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
+    data = column_scaler.transform(data)
+
+    #rename and reorder, output of columns scaler doesn't preserve names or order.
+    data.columns = [i.split("__",1)[1] for i in data.columns]
+
+    return data
+
+
 
 # Model-building functions
 def build_model(hp, input_dim_A, input_dim_B):
@@ -202,18 +227,18 @@ def build_model(hp, input_dim_A, input_dim_B):
     return model
 
 # Training, evaluation, and plotting functions
-def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_idx,wn_idx):
+def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_names_ordered,wn_columns_names_ordered):
 
     earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
 
-    tuner.search([data.loc[data[SPLITNAME] == 'training', data.columns[bio_idx]],
-                  data.loc[data[SPLITNAME] == 'training',data.columns[wn_idx]]],
+    tuner.search([data.loc[data[SPLITNAME] == 'training', data.columns[bio_names_ordered]],
+                  data.loc[data[SPLITNAME] == 'training',data.columns[wn_columns_names_ordered]]],
                   data.loc[data[SPLITNAME] == 'training', RESPONSE_COLUMNS],
                  epochs=nb_epoch,
                  batch_size=batch_size,
                  shuffle=True,
-                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', data.columns[bio_idx]],
-                                  data.loc[data[SPLITNAME] == 'validation',data.columns[wn_idx]]],
+                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', data.columns[bio_names_ordered]],
+                                  data.loc[data[SPLITNAME] == 'validation',data.columns[wn_columns_names_ordered]]],
                                   data.loc[data[SPLITNAME] == 'validation',RESPONSE_COLUMNS]],
                  verbose=1,
                  callbacks=[earlystop])
@@ -371,19 +396,18 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
     return model
 
 # Inference function 
-def InferenceMode(model, data, scaler_x, scaler_y):
-
-    #try to remove this, doesn't work well in conjunction with format_data function
-    #data,_ = scale(data, scaler=scaler_x,data_type="feature", pad_missing=pad_missing, wn_interp=wn_interp,do_scale=apply_x_scaler)
-
-    bio_features = [x for x in scaler_x['columns'] if WN_MATCH not in x]
-    wn_features = [x for x in scaler_x['columns'] if x not in bio_features]
+def InferenceMode(model, data, scaler,names_ordered):
 
     # Run inference
-    prediction = model.predict([data[bio_features], data[wn_features]])
+    prediction = model.predict([data[names_ordered['bio_column_names_ordered']], data[names_ordered['wn_columns_names_ordered']]])
+
+    #check to inform of case where multiple respond columns are provided, not yet solved for this case and
+    #throughout codebase
+    if prediction.shape[1]>1:
+        raise ValueError("cannot yet handle multiple response columns in data")
 
     # Inverse transform the prediction to the original scale
-    prediction = scaler_y['object'].inverse_transform(prediction)
+    prediction = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(prediction)
 
     return prediction
 
@@ -515,7 +539,7 @@ def standardize_data(data,interp_minmaxstep = None):
 
     return data, [interp_min,interp_max,interp_step_size], wn_inds
 
-def autoOneHot(data,total_bio_columns,expand_nonstandard_str=True,NA_as_one_hot_category=True):
+def autoOneHot(data,expand_nonstandard_str=True,NA_as_one_hot_category=True):
 
     data = deepcopy(data)
 
@@ -576,19 +600,18 @@ def autoOneHot(data,total_bio_columns,expand_nonstandard_str=True,NA_as_one_hot_
                 biological_expanded.append(data[data.columns[i]])
 
     bio = pd.concat(biological_expanded,axis = 1)
+    bio.reset_index(drop=True, inplace=True)
 
     #check it's not bigger than max cols, and pad extra cols on.
 
-    assert len([x for x in bio.columns if "_UNDECLARED_" not in x]) <= total_bio_columns
+    #if bio.shape[1] < total_bio_columns:
 
-    if bio.shape[1] < total_bio_columns:
+    #    padding = pd.DataFrame(MISSING_DATA_VALUE_UNSCALED,index=range(bio.shape[0]),columns = [f"_UNDECLARED_{m}" for m in range(bio.shape[1]+1,total_bio_columns+1)])
 
-        padding = pd.DataFrame(MISSING_DATA_VALUE,index=range(bio.shape[0]),columns = [f"_UNDECLARED_{m}" for m in range(bio.shape[1]+1,total_bio_columns+1)])
+    #    bio.reset_index(drop=True, inplace=True)
+    #    padding.reset_index(drop=True, inplace=True)
 
-        bio.reset_index(drop=True, inplace=True)
-        padding.reset_index(drop=True, inplace=True)
-
-        bio = pd.concat([bio, padding], axis=1)
+    #    bio = pd.concat([bio, padding], axis=1)
 
     responsedat = data.iloc[:, resp_inds]
     responsedat.reset_index(drop=True, inplace=True)
@@ -601,7 +624,7 @@ def autoOneHot(data,total_bio_columns,expand_nonstandard_str=True,NA_as_one_hot_
 
     all = pd.concat([responsedat,infdat,bio,wn_dat],axis=1)
 
-    return all, (list(range(0,len(resp_inds))),list(range(len(resp_inds),len(resp_inds+inf_inds))),[len(resp_inds+inf_inds) + m for m in list(range(total_bio_columns))],[m + (len(resp_inds+inf_inds)+total_bio_columns) for m in range(len(wn_inds))])
+    return all, (list(range(0,len(resp_inds))),list(range(len(resp_inds),len(resp_inds+inf_inds))),[len(resp_inds+inf_inds) + m for m in list(range(bio.shape[1]))],[m + (len(resp_inds+inf_inds)+bio.shape[1]) for m in range(len(wn_inds))])
     #disinguish the non-wn and informational columns
     #assess which of those is defined as categorical, expand with one-hot.
     #assert that the resulting total # of columns is < than "total_bio_columns"
@@ -624,7 +647,7 @@ def hash_dataset(data: pd.DataFrame) -> str:
 
     return data_hash
 
-def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_columns=100, extra_bio_columns = None, interp_minmaxstep = None, seed_value=42,add_scale=False):
+def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_columns=None, interp_minmaxstep = None, seed_value=42,add_scale=False):
     data = deepcopy(data)
     dummy_col = []
     np.random.seed(seed_value)
@@ -640,7 +663,8 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_col
 
     #condition: if scaling has already been provided, look into the column values to assess if interpolation is necessary. If it is necessary, provide the values into below function.
     if not isinstance(scaler,str) and interp_minmaxstep is None:
-        _, _, wn_min, step, wn_max, model_wn_inds = wnExtract(scaler["columns"])
+
+        _, _, wn_min, step, wn_max, _ = wnExtract(scaler[0].transformers[-1][2]) #sum([i[2] for i in scaler.transformers],[])
         interp_minmaxstep = [wn_min, wn_max, step]
 
     data,interp_minmaxstep,wn_inds = standardize_data(data,interp_minmaxstep)
@@ -651,18 +675,11 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_col
         data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
         data_bio_columns = [x for x in data_feature_columns if WN_MATCH not in x]
 
-        # check what need to extract for evaluating model features.
-        import code
-        code.interact(local=dict(globals(), **locals()))
-
-        model_bio_features = [x for x in scaler[0] if WN_MATCH not in x]
-        model_wn_features = scaler[-1][2]
+        model_bio_features = [x[0] for x in sum([z.transformers[:-1] for z in scaler],[]) if x[0] not in RESPONSE_COLUMNS]
+        model_wn_features = scaler[0].transformers[-1][2]
 
         # check if the col names representing # are similar or not the same. Safe to assume at this point both are consecutive and on the right side of the ds.
-        assert len(wn_inds) == len(model_wn_inds)
-
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
+        assert len(wn_inds) == len(model_wn_features)
 
         # check they are immaterially different
         assert all([abs(float(data.iloc[:, wn_inds[x]].name[len(WN_MATCH):]) - float(model_wn_features[x][len(WN_MATCH):])) < 0.001 for x in range(len(wn_inds))])
@@ -670,10 +687,10 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_col
         # this resolves any naming differences due to rounding.
         data = data.rename(columns={data.iloc[:, wn_inds[x]].name: model_wn_features[x] for x in range(len(wn_inds))})
 
-        #also while in this conditional, can add in extra bio columns present in scaler_x (and thus the model itself) that will be needed for both inference and fine-tune
+        #also while in this conditional, can add in extra bio columns that will be needed for both inference and fine-tune
 
         if not all([x in data_bio_columns for x in model_bio_features]):
-            dummy_col = [col for col in model_bio_features if col not in data_bio_columns] #and "_UNDECLARED_" not in col ] - worry about this seperately
+            dummy_col = [col for col in model_bio_features if col not in data_bio_columns]
             data[dummy_col] = MISSING_DATA_VALUE
 
     if not SPLITNAME in data and splitvec is None:
@@ -704,52 +721,100 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_col
     else:
         raise ValueError(f"Data must contain an {IDNAME} column to distinguish it from all other samples in dataset(s)")
 
-    if extra_bio_columns is not None and total_bio_columns is not None:
-        raise ValueError("cannot specify both extra_bio_columns and total_bio_columns")
-    elif extra_bio_columns is not None:
-        total_bio_columns = len(data.columns) - len(wn_inds) + extra_bio_columns # check that's right
 
     #Also require string bio columns to be marked as categorical, and have the same one-hot behavior applied
     #(maybe that's an optional behavior, alternative behavior would be to include extra columns as simply informational?)
-    data,dt_indices = autoOneHot(data, total_bio_columns)
+    data,dt_indices = autoOneHot(data)
+
+    #check we didn't exceed total_bio columns with one hot expansion
+    if total_bio_columns is not None:
+        assert dt_indices[2] <= total_bio_columns
 
     data = preprocess_spectra(data, filter_CHOICE)
 
+    #todo
+    #let's do it this way: feed in the column names you want to scale to create_scale, then have a merge
+    #function to replace the scaled values.
     if isinstance(scaler,str):
-        data, scaler = create_scale(data, scaler, data_indices = dt_indices)
+        data_mod, scaler = create_scale(data[[[i for i in data.columns][x] for x in dt_indices[0]+dt_indices[2]+dt_indices[3]]], scaler)
+        data[data_mod.columns]=data_mod
     else:
-        new_features = 0
-
-        # scale existing
-        data = scaler.transform(data)
 
         # assess new feature columns
         data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
         data_bio_columns = [x for x in data_feature_columns if WN_MATCH not in x]
 
-        #check what need to extract for evaluating model features.
-        import code
-        code.interact(local=dict(globals(), **locals()))
-
-        model_bio_features = [x for x in scaler['columns'] if WN_MATCH not in x]
+        model_bio_features = [x[0] for x in sum([z.transformers[:-1] for z in scaler],[]) if x[0] not in RESPONSE_COLUMNS]
         new_features = [x for x in data_bio_columns if x not in model_bio_features and 'UNDECLARED_' not in x]
 
+        cols_in_order = []
+        # scale existing
+        for i in list(range(1,len(scaler)+1))[::-1]:
+            data_mod = transform(data, scaler[-i]) # list(data.iloc[:, dt_indices[1]].columns), dt_indices[1]
+            data[data_mod.columns] = data_mod
+
         if add_scale and len(new_features) > 0:
-            pass
-            # consume UNDECLARED bio columns,
 
-    formatted_data, scaler = scale(data, scaler, data_type = "feature",missing_col=dummy_col,bio_indices=dt_indices[2],wn_indeces=dt_indices[3])
+            # create a scaler for new columns
+            data_new,new_scaler = create_scale(data[new_features], scaler[0].transformers[0][1]) #assume for now use the original scaler approach, but don't have to.
+            scaler.append(new_scaler[0])
 
-    metadata = {"scaler":scaler,"filter":filter_CHOICE,"splits":{"vec":splitvec,"origination":split_behavior},
+            data[data_new.columns] = data_new
+
+    outputs = {"scaler":scaler,"filter":filter_CHOICE,"splits":{"vec":splitvec,"origination":split_behavior},
                 "datatype_indices":{"response_indices":dt_indices[0],"informational_indices":dt_indices[1],"bio_indices":dt_indices[2],"wn_indices":dt_indices[3]}}
 
-    return formatted_data,metadata,og_data_hashes
+    return data,outputs,og_data_hashes
+
+def pad_bio_columns(data,bio_names_ordered,wn_columns_names_ordered,total_bio_columns,extra_bio_columns):
+
+    bio_col_len = len(bio_names_ordered)
+    if total_bio_columns is None and extra_bio_columns is None:
+        bio_col_len = bio_col_len
+    elif total_bio_columns is not None:
+        bio_col_len = total_bio_columns
+    else:
+        bio_col_len = bio_col_len + extra_bio_columns
+
+        # required to not have side effects on the original data object
+    data = deepcopy(data)
+
+    bio_data = data[bio_names_ordered]
+    wn_data = data[wn_columns_names_ordered]
+
+    # zero pad the bio data to make sure the model trains at the correct size.
+    if bio_data.shape[1] < bio_col_len:
+        padding = pd.DataFrame(MISSING_DATA_VALUE_UNSCALED, index=range(bio_data.shape[0]),
+                               columns=[f"_UNDECLARED_{m}" for m in range(bio_data.shape[1] + 1, bio_col_len + 1)])
+
+        bio_data.reset_index(drop=True, inplace=True)
+        padding.reset_index(drop=True, inplace=True)
+
+        bio_data = pd.concat([bio_data, padding], axis=1)
+
+        wn_data.reset_index(drop=True, inplace=True)
+
+        response_data = data[RESPONSE_COLUMNS]
+        response_data.reset_index(drop=True, inplace=True)
+
+        data = pd.concat(bio_data, wn_data, response_data) #not the same as before, but completely internal, slightly easier logic for idx predictability
+        bio_idx = range(bio_col_len)
+        wn_idx = range(bio_col_len, data.shape[0])
+
+    return data,bio_data.columns,wn_data.columns
 
 # Training Mode with Hyperband 
-def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx, max_epochs=35, batch_size = 32, seed_value=42):
+def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, batch_size = 32, seed_value=42):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
+
+    #named order of bio and wn columns:
+    bio_names_ordered = [data.columns[x] for x in bio_idx]
+    wn_columns_names_ordered = [data.columns[x] for x in wn_idx]
+
+    padded_data, bio_names_ordered_padded, wn_columns_names_ordered_padded = pad_bio_columns(data, bio_names_ordered, wn_columns_names_ordered, total_bio_columns=total_bio_columns,
+                                                   extra_bio_columns=extra_bio_columns)
 
     input_dim_A = len(bio_idx)
     input_dim_B = len(wn_idx)
@@ -767,10 +832,10 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx, max_epochs=35
             seed=seed_value
         )
 
-        model, best_hp = train_and_optimize_model(tuner, data, max_epochs, batch_size, bio_idx, wn_idx)
-        history = final_training_pass(model, data, max_epochs, batch_size, bio_idx, wn_idx)
+        model, best_hp = train_and_optimize_model(tuner, padded_data, max_epochs, batch_size, bio_names_ordered, wn_columns_names_ordered_padded)
+        history = final_training_pass(model, padded_data, max_epochs, batch_size, bio_names_ordered, wn_columns_names_ordered)
 
-    evaluation, preds, r2 = evaluate_model(model, data, bio_idx, wn_idx)
+    evaluation, preds, r2 = evaluate_model(model, padded_data, bio_names_ordered, wn_columns_names_ordered)
 
     model.summary()
 
@@ -780,18 +845,24 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx, max_epochs=35
         'evaluation': evaluation,
         'predictions': preds,
         'r2_score': r2,
-        'col_data': {'column_names':data.columns,'bio_idx':bio_idx, 'wn_idx':wn_idx}
+        'model_col_names': {'bio_column_names_ordered':bio_names_ordered,'wn_columns_names_ordered':wn_columns_names_ordered}
     }
 
     #could return top 3 in extra outputs, etc.
     return training_outputs, {best_hp}
 
 # Training Mode without Hyperband
-def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35, batch_size = 32, seed_value=42, \
+def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35, batch_size = 32, seed_value=42,total_bio_columns=None,extra_bio_columns=None, \
                                  num_conv_layers = 2, kernel_size = 101, stride_size = 51, dropout_rate = 0.1, use_max_pooling = False, num_filters = 50, dense_units = 256, dropout_rate_2 = 0.1):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
+
+    # named order of bio and wn columns:
+    bio_names_ordered = [data.columns[x] for x in bio_idx]
+    wn_columns_names_ordered = [data.columns[x] for x in wn_idx]
+
+    padded_data,bio_names_ordered_padded,wn_columns_names_ordered_padded = pad_bio_columns(data,bio_names_ordered, wn_columns_names_ordered,total_bio_columns=total_bio_columns,extra_bio_columns=extra_bio_columns)
 
     input_dim_A = len(bio_idx)
     input_dim_B = len(wn_idx)
@@ -809,9 +880,9 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
         dropout_rate_2
     )
 
-    history = final_training_pass(model, data, epochs, batch_size,bio_idx,wn_idx)
+    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered_padded)
     
-    evaluation, preds, r2 = evaluate_model(model, data,bio_idx,wn_idx)
+    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered_padded)
     print(f"Evaluation: {evaluation}, R2: {r2}")
     
     model.summary()
@@ -822,32 +893,39 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
         'evaluation': evaluation,
         'predictions': preds,
         'r2_score': r2,
-        'col_data': {'column_names':data.columns,'bio_idx':bio_idx, 'wn_idx':wn_idx}
+        'model_col_names': {'bio_column_names_ordered': bio_names_ordered, 'wn_columns_names_ordered': wn_columns_names_ordered},
     }
     
     return training_outputs, {}
 
 # Training Mode with Fine-tuning 
-def TrainingModeFinetuning(model, data, previous_metadata,bio_idx,wn_idx, epochs = 35, batch_size = 32, seed_value=42):
+def TrainingModeFinetuning(model, data, previous_metadata,bio_idx,wn_idx,names_ordered, total_bio_columns=None, \
+                                                   extra_bio_columns=None, epochs = 35, batch_size = 32, seed_value=42):
 
-    #unpack to dict if needed
-    if isinstance(previous_metadata, list):
-        previous_metadata = previous_metadata[-1]
+    padded_data, bio_names_ordered_padded, wn_columns_names_ordered_padded = pad_bio_columns(data, names_ordered['bio_column_names_ordered'], names_ordered['wn_columns_names_ordered'], total_bio_columns=total_bio_columns,
+                                                   extra_bio_columns=extra_bio_columns)
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
 
-    history = final_training_pass(model, data, epochs, batch_size,bio_idx,wn_idx) #make sure what goes in here is: data that matches previous columns, then overwrite existing undeclared columns
+    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered_padded)
     
     # Evaluate the model
-    evaluation, preds, r2 = evaluate_model(model, data)
+    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered_padded)
     print(f"Evaluation: {evaluation}, R2: {r2}")
     
     model.summary()
+
+    import code
+    code.interact(local=dict(globals(), **locals()))
     
     # Prepare the output
     training_outputs = {
-
+        'trained_model': model,
+        'training_history': history,
+        'evaluation': evaluation,
+        'predictions': preds,
+        'r2_score': r2
     }
     
     return training_outputs, {}
@@ -877,18 +955,18 @@ def preprocess_spectra(data, filter_type='savgol'):
     return data
 
 # Final training pass function
-def final_training_pass(model, data, nb_epoch, batch_size,bio_idx,wn_idx):
+def final_training_pass(model, data, nb_epoch, batch_size,bio_names_ordered,wn_columns_names_ordered):
 
     earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
-    history = model.fit([data.loc[data[SPLITNAME] == 'training', data.columns[bio_idx]],
-                  data.loc[data[SPLITNAME] == 'training', data.columns[wn_idx]]],
+    history = model.fit([data.loc[data[SPLITNAME] == 'training', data.columns[bio_names_ordered]],
+                  data.loc[data[SPLITNAME] == 'training', data.columns[wn_columns_names_ordered]]],
                  data.loc[data[SPLITNAME] == 'training', RESPONSE_COLUMNS],
                  epochs=nb_epoch,
                  batch_size=batch_size,
                  shuffle=True,
-                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', data.columns[bio_idx]],
-                                   data.loc[data[SPLITNAME] == 'validation', data.columns[wn_idx]]],
+                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', data.columns[bio_names_ordered]],
+                                   data.loc[data[SPLITNAME] == 'validation', data.columns[wn_columns_names_ordered]]],
                                   data.loc[data[SPLITNAME] == 'validation', RESPONSE_COLUMNS]],
                  verbose=1,
                  callbacks=[earlystop]).history

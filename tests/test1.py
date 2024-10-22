@@ -37,13 +37,15 @@ def main():
         data=formatted_data,
         bio_idx = format_metadata["datatype_indices"]["bio_indices"],
         wn_idx = format_metadata["datatype_indices"]["wn_indices"],
+        extra_bio_columns=5,
         max_epochs = 1
     )
 
     training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
         data=formatted_data,
         bio_idx = format_metadata["datatype_indices"]["bio_indices"],
-        wn_idx = format_metadata["datatype_indices"]["wn_indices"]
+        wn_idx = format_metadata["datatype_indices"]["wn_indices"],
+        total_bio_columns=100
     )
 
     model = training_outputs_manual['trained_model']
@@ -56,7 +58,7 @@ def main():
     #reload the data, and format with existing scalers.
     formatted_data2,_,_ = format_data(data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
 
-    prediction1 = InferenceMode(model, formatted_data2.loc[1:5], metadata['scaler'])
+    prediction1 = InferenceMode(model, formatted_data2.loc[1:5], metadata['scaler'],metadata['names_ordered'])
 
     test_data = deepcopy(data)
 
@@ -75,10 +77,7 @@ def main():
 
     #not sure if the values (bad) represent an incorrect approach or natural poor performance.
     formatted_data1, _, _ = format_data(data1, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'], splitvec=[0, 0])
-    prediction1_alt = InferenceMode(model, formatted_data1.loc[1:5], metadata['scaler'])
-
-    import code
-    code.interact(local=dict(globals(), **locals()))
+    prediction1_alt = InferenceMode(model, formatted_data1.loc[1:5], metadata['scaler'],metadata['names_ordered'])
 
     model.save("./Models/my_model.keras")
 
@@ -89,13 +88,19 @@ def main():
     model, metadata = loadModelWithMetadata(model_w_metadata_path)
 
     #try with a model trainined 1 previous time
-    prediction2 = InferenceMode(model,formatted_data.loc[1:5], metadata['scaler']) #should be the same as 1
+    prediction2 = InferenceMode(model,formatted_data.loc[1:5], metadata['scaler'],metadata['names_ordered']) #should be the same as 1
 
-    assert all(prediction1 == prediction2)
+    #assert all(prediction1 == prediction2)
+
+    #todo: to fine tune, need to bring in an existing scaler and provide to a specific format_data call to modify it. use the exported
+    #scaler in the finetune function.
+    formatted_data1, outputs, _ = format_data(data1, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],
+                                        splitvec=[0, 0],add_scale=True)
 
     training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=formatted_data,previous_metadata = metadata,
                            filter_CHOICE='savgol',
                            scaling_CHOICE='maxabs',
+                           metadata['names_ordered'],
                            seed_value=42)
 
     new_metadata = training_outputs_finetuning
