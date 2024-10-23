@@ -134,8 +134,6 @@ def create_scale(data,scaler):
             'normalize': Normalizer  # Note: Normalizer might not be suitable for y, use with caution
         }
 
-        # import code
-        # code.interact(local=dict(globals(), **locals()))
 
         if scaler not in scalers:
             raise ValueError(f"Unsupported scaling method: {scaler}")
@@ -150,7 +148,8 @@ def create_scale(data,scaler):
     data.loc[len(data)] = [0 if ONE_HOT_FLAG in x else data[x].median() if WN_MATCH in x else MISSING_DATA_VALUE for x in data.columns]
 
     #if providing data_indeces, assume that only some of the data are getting scaled (such as in first round, when changing data in place.)
-    if WN_MATCH in data.columns:
+
+    if any([WN_MATCH in m for m in data.columns]):
         _, _, _, _, _, wn_inds = wnExtract(data.columns)
         column_scaler = ColumnTransformer([(x,scaler,[x]) for x in [data.columns[m] for m in range(min(wn_inds))]]+[(WN_STRING_NAME,scaler,[data.columns[n] for n in wn_inds])])
     else:
@@ -231,14 +230,17 @@ def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_names_ordered
 
     earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
 
-    tuner.search([data.loc[data[SPLITNAME] == 'training', data.columns[bio_names_ordered]],
-                  data.loc[data[SPLITNAME] == 'training',data.columns[wn_columns_names_ordered]]],
+    print(bio_names_ordered)
+    print(data[bio_names_ordered])
+
+    tuner.search([data.loc[data[SPLITNAME] == 'training', bio_names_ordered],
+                  data.loc[data[SPLITNAME] == 'training',wn_columns_names_ordered]],
                   data.loc[data[SPLITNAME] == 'training', RESPONSE_COLUMNS],
                  epochs=nb_epoch,
                  batch_size=batch_size,
                  shuffle=True,
-                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', data.columns[bio_names_ordered]],
-                                  data.loc[data[SPLITNAME] == 'validation',data.columns[wn_columns_names_ordered]]],
+                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', bio_names_ordered],
+                                  data.loc[data[SPLITNAME] == 'validation',wn_columns_names_ordered]],
                                   data.loc[data[SPLITNAME] == 'validation',RESPONSE_COLUMNS]],
                  verbose=1,
                  callbacks=[earlystop])
@@ -258,9 +260,9 @@ def plot_training_history(history):
     plt.legend(['Train', 'Validation'], loc='upper right')
     plt.show()
 
-def evaluate_model(model, data, bio_idx, wn_idx):
+def evaluate_model(model, data, bio_names, wn_names):
 
-    bio_and_wn_data_list = [data.loc[data[SPLITNAME] == 'test', data.columns[bio_idx]], data.loc[data[SPLITNAME] == 'test', data.columns[wn_idx]]]
+    bio_and_wn_data_list = [data.loc[data[SPLITNAME] == 'test', bio_names], data.loc[data[SPLITNAME] == 'test', wn_names]]
     response_data  = data.loc[data[SPLITNAME] == 'test', RESPONSE_COLUMNS]
 
     evaluation = model.evaluate(bio_and_wn_data_list,response_data)
@@ -398,8 +400,14 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
 # Inference function 
 def InferenceMode(model, data, scaler,names_ordered):
 
+
+    padded_data, _ = pad_bio_columns(data, names_ordered['bio_column_names_ordered'],
+                                                            total_bio_columns=len(names_ordered['bio_column_names_ordered_padded']))
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     # Run inference
-    prediction = model.predict([data[names_ordered['bio_column_names_ordered']], data[names_ordered['wn_columns_names_ordered']]])
+    prediction = model.predict([padded_data[names_ordered['bio_column_names_ordered_padded']], data[names_ordered['wn_columns_names_ordered']]])
 
     #check to inform of case where multiple respond columns are provided, not yet solved for this case and
     #throughout codebase
@@ -738,6 +746,7 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_col
     if isinstance(scaler,str):
         data_mod, scaler = create_scale(data[[[i for i in data.columns][x] for x in dt_indices[0]+dt_indices[2]+dt_indices[3]]], scaler)
         data[data_mod.columns]=data_mod
+
     else:
 
         # assess new feature columns
@@ -766,7 +775,7 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_col
 
     return data,outputs,og_data_hashes
 
-def pad_bio_columns(data,bio_names_ordered,wn_columns_names_ordered,total_bio_columns,extra_bio_columns):
+def pad_bio_columns(data,bio_names_ordered,total_bio_columns=None,extra_bio_columns=None):
 
     bio_col_len = len(bio_names_ordered)
     if total_bio_columns is None and extra_bio_columns is None:
@@ -780,7 +789,9 @@ def pad_bio_columns(data,bio_names_ordered,wn_columns_names_ordered,total_bio_co
     data = deepcopy(data)
 
     bio_data = data[bio_names_ordered]
-    wn_data = data[wn_columns_names_ordered]
+
+    data_minus_bio_data = data.drop(bio_names_ordered, axis=1)
+    data_minus_bio_data.reset_index(drop=True, inplace=True)
 
     # zero pad the bio data to make sure the model trains at the correct size.
     if bio_data.shape[1] < bio_col_len:
@@ -792,16 +803,9 @@ def pad_bio_columns(data,bio_names_ordered,wn_columns_names_ordered,total_bio_co
 
         bio_data = pd.concat([bio_data, padding], axis=1)
 
-        wn_data.reset_index(drop=True, inplace=True)
+        data = pd.concat([bio_data, data_minus_bio_data], axis=1) #not the same as before, but completely internal, slightly easier logic for idx predictability
 
-        response_data = data[RESPONSE_COLUMNS]
-        response_data.reset_index(drop=True, inplace=True)
-
-        data = pd.concat(bio_data, wn_data, response_data) #not the same as before, but completely internal, slightly easier logic for idx predictability
-        bio_idx = range(bio_col_len)
-        wn_idx = range(bio_col_len, data.shape[0])
-
-    return data,bio_data.columns,wn_data.columns
+    return data,list(bio_data.columns)
 
 # Training Mode with Hyperband 
 def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, batch_size = 32, seed_value=42):
@@ -813,10 +817,10 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
     bio_names_ordered = [data.columns[x] for x in bio_idx]
     wn_columns_names_ordered = [data.columns[x] for x in wn_idx]
 
-    padded_data, bio_names_ordered_padded, wn_columns_names_ordered_padded = pad_bio_columns(data, bio_names_ordered, wn_columns_names_ordered, total_bio_columns=total_bio_columns,
+    padded_data, bio_names_ordered_padded = pad_bio_columns(data, bio_names_ordered, total_bio_columns=total_bio_columns,
                                                    extra_bio_columns=extra_bio_columns)
 
-    input_dim_A = len(bio_idx)
+    input_dim_A = len(bio_names_ordered_padded)
     input_dim_B = len(wn_idx)
 
     def model_builder(hp):
@@ -832,10 +836,10 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
             seed=seed_value
         )
 
-        model, best_hp = train_and_optimize_model(tuner, padded_data, max_epochs, batch_size, bio_names_ordered, wn_columns_names_ordered_padded)
-        history = final_training_pass(model, padded_data, max_epochs, batch_size, bio_names_ordered, wn_columns_names_ordered)
+        model, best_hp = train_and_optimize_model(tuner, padded_data, max_epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered)
+        history = final_training_pass(model, padded_data, max_epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered)
 
-    evaluation, preds, r2 = evaluate_model(model, padded_data, bio_names_ordered, wn_columns_names_ordered)
+    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
 
     model.summary()
 
@@ -845,7 +849,7 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
         'evaluation': evaluation,
         'predictions': preds,
         'r2_score': r2,
-        'model_col_names': {'bio_column_names_ordered':bio_names_ordered,'wn_columns_names_ordered':wn_columns_names_ordered}
+        'model_col_names': {'bio_column_names_ordered':bio_names_ordered,'bio_column_names_ordered_padded':bio_names_ordered_padded,'wn_columns_names_ordered':wn_columns_names_ordered}
     }
 
     #could return top 3 in extra outputs, etc.
@@ -862,9 +866,9 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
     bio_names_ordered = [data.columns[x] for x in bio_idx]
     wn_columns_names_ordered = [data.columns[x] for x in wn_idx]
 
-    padded_data,bio_names_ordered_padded,wn_columns_names_ordered_padded = pad_bio_columns(data,bio_names_ordered, wn_columns_names_ordered,total_bio_columns=total_bio_columns,extra_bio_columns=extra_bio_columns)
+    padded_data,bio_names_ordered_padded = pad_bio_columns(data,bio_names_ordered,total_bio_columns=total_bio_columns,extra_bio_columns=extra_bio_columns)
 
-    input_dim_A = len(bio_idx)
+    input_dim_A = len(bio_names_ordered_padded)
     input_dim_B = len(wn_idx)
 
     model = build_model_manual(
@@ -880,9 +884,9 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
         dropout_rate_2
     )
 
-    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered_padded)
+    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered)
     
-    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered_padded)
+    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
     print(f"Evaluation: {evaluation}, R2: {r2}")
     
     model.summary()
@@ -893,31 +897,34 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
         'evaluation': evaluation,
         'predictions': preds,
         'r2_score': r2,
-        'model_col_names': {'bio_column_names_ordered': bio_names_ordered, 'wn_columns_names_ordered': wn_columns_names_ordered},
+        'model_col_names': {'bio_column_names_ordered':bio_names_ordered,'bio_column_names_ordered_padded':bio_names_ordered_padded,'wn_columns_names_ordered':wn_columns_names_ordered}
     }
     
     return training_outputs, {}
 
 # Training Mode with Fine-tuning 
-def TrainingModeFinetuning(model, data, previous_metadata,bio_idx,wn_idx,names_ordered, total_bio_columns=None, \
-                                                   extra_bio_columns=None, epochs = 35, batch_size = 32, seed_value=42):
+def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch_size = 32, seed_value=42):
 
-    padded_data, bio_names_ordered_padded, wn_columns_names_ordered_padded = pad_bio_columns(data, names_ordered['bio_column_names_ordered'], names_ordered['wn_columns_names_ordered'], total_bio_columns=total_bio_columns,
-                                                   extra_bio_columns=extra_bio_columns)
+    bio_names_ordered = [data.columns[x] for x in bio_idx] #this gets us the current dataset columns. can assume due to format_data dummy col behavior that previous columns are represented and values are scaled properly to
+    #represent MISSING_DATA_VALUE.
+
+    #names_ordered['bio_column_names_ordered'] #this is the old dataset columns.
+
+    #this ensures that it respects previous order.
+    bio_names_ordered_match = names_ordered['bio_column_names_ordered']+[i for i in bio_names_ordered if i not in names_ordered['bio_column_names_ordered']]
+
+    padded_data, bio_names_ordered_padded = pad_bio_columns(data, bio_names_ordered_match, total_bio_columns=len(names_ordered['bio_column_names_ordered_padded']))
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
 
-    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered_padded)
+    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])
     
     # Evaluate the model
-    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered_padded)
+    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])
     print(f"Evaluation: {evaluation}, R2: {r2}")
     
     model.summary()
-
-    import code
-    code.interact(local=dict(globals(), **locals()))
     
     # Prepare the output
     training_outputs = {
@@ -925,7 +932,10 @@ def TrainingModeFinetuning(model, data, previous_metadata,bio_idx,wn_idx,names_o
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
-        'r2_score': r2
+        'r2_score': r2,
+        'model_col_names': {'bio_column_names_ordered': bio_names_ordered,
+                            'bio_column_names_ordered_padded': bio_names_ordered_padded,
+                            'wn_columns_names_ordered': names_ordered['bio_column_names_ordered_padded']}
     }
     
     return training_outputs, {}
@@ -959,14 +969,14 @@ def final_training_pass(model, data, nb_epoch, batch_size,bio_names_ordered,wn_c
 
     earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
-    history = model.fit([data.loc[data[SPLITNAME] == 'training', data.columns[bio_names_ordered]],
-                  data.loc[data[SPLITNAME] == 'training', data.columns[wn_columns_names_ordered]]],
+    history = model.fit([data.loc[data[SPLITNAME] == 'training', bio_names_ordered],
+                  data.loc[data[SPLITNAME] == 'training', wn_columns_names_ordered]],
                  data.loc[data[SPLITNAME] == 'training', RESPONSE_COLUMNS],
                  epochs=nb_epoch,
                  batch_size=batch_size,
                  shuffle=True,
-                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', data.columns[bio_names_ordered]],
-                                   data.loc[data[SPLITNAME] == 'validation', data.columns[wn_columns_names_ordered]]],
+                 validation_data=[[data.loc[data[SPLITNAME] == 'validation', bio_names_ordered],
+                                   data.loc[data[SPLITNAME] == 'validation', wn_columns_names_ordered]],
                                   data.loc[data[SPLITNAME] == 'validation', RESPONSE_COLUMNS]],
                  verbose=1,
                  callbacks=[earlystop]).history

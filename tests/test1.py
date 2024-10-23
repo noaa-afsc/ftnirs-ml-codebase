@@ -55,29 +55,36 @@ def main():
     metadata.update(format_metadata) #use a combination of the training outputs and the format data metadata as the metadata
     metadata["description"] = 'Very cool model, the concept came to me in a dream last night.'
 
-    #reload the data, and format with existing scalers.
-    formatted_data2,_,_ = format_data(data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
+    #test out inference on the same dataset as training
+    prediction1 = InferenceMode(model,formatted_data.loc[1:5], metadata['scaler'],metadata['model_col_names']) #should be the same as 1
+    print(prediction1)
 
-    prediction1 = InferenceMode(model, formatted_data2.loc[1:5], metadata['scaler'],metadata['names_ordered'])
+    #test out inference on the same dataset as training, but this time using the existing scaler.
+    formatted_data1, _, _ = format_data(data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
+    prediction2 = InferenceMode(model, formatted_data1.loc[1:5], metadata['scaler'],metadata['model_col_names'])
+    print(prediction2)
 
+    #should be the same or very close.
+    print('is each prediction the same:')
+    all(prediction1 == prediction2)
+
+    #see what happens when we drop a columm.
     test_data = deepcopy(data)
-
-    #see what happens when we drop a columm (this one used in AFSC data sample, could make the test more generic
     test_data.drop("gear_depth",axis=1,inplace=True)
+    formatted_data2,_,_ = format_data(test_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
 
-    formatted_data3,_,_ = format_data(test_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],
-                                  splitvec=[0, 0])
-
-    prediction1_drop = InferenceMode(model, formatted_data3.loc[1:5], metadata['scaler'])
+    prediction1_drop = InferenceMode(model, formatted_data2.loc[1:5], metadata['scaler'],metadata['model_col_names'])
+    print(prediction1_drop)
 
     #see what happens when I load in another dataset entirely, format it, and plug it into inference.
-
     filepath1 = './Data/NWFSC_data_sample_trunc.csv'
-    data1 = pd.read_csv(filepath1)
+    different_data = pd.read_csv(filepath1)
 
     #not sure if the values (bad) represent an incorrect approach or natural poor performance.
-    formatted_data1, _, _ = format_data(data1, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'], splitvec=[0, 0])
-    prediction1_alt = InferenceMode(model, formatted_data1.loc[1:5], metadata['scaler'],metadata['names_ordered'])
+    formatted_diff_data, _, _ = format_data(different_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'], splitvec=[0, 0])
+    prediction1_alt = InferenceMode(model, formatted_diff_data.loc[1:5], metadata['scaler'],metadata['model_col_names'])
+
+    print(prediction1_alt)
 
     model.save("./Models/my_model.keras")
 
@@ -87,24 +94,13 @@ def main():
     saveModelWithMetadata(model,model_w_metadata_path, metadata=metadata)
     model, metadata = loadModelWithMetadata(model_w_metadata_path)
 
-    #try with a model trainined 1 previous time
-    prediction2 = InferenceMode(model,formatted_data.loc[1:5], metadata['scaler'],metadata['names_ordered']) #should be the same as 1
-
-    #assert all(prediction1 == prediction2)
-
-    #todo: to fine tune, need to bring in an existing scaler and provide to a specific format_data call to modify it. use the exported
-    #scaler in the finetune function.
-    formatted_data1, outputs, _ = format_data(data1, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],
-                                        splitvec=[0, 0],add_scale=True)
-
-    training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=formatted_data,previous_metadata = metadata,
-                           filter_CHOICE='savgol',
-                           scaling_CHOICE='maxabs',
-                           metadata['names_ordered'],
+    training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=formatted_data,
+                           bio_idx = metadata["datatype_indices"]["bio_indices"],
+                           names_ordered=metadata['model_col_names'],
                            seed_value=42)
 
     new_metadata = training_outputs_finetuning
-    new_metadata["description"] = 'Improve upon the last model. Used maxabs for scaling'
+    new_metadata["description"] = 'Improve upon the last model.'
 
     model_w_metadata_path = "./Models/my_model_with_metadata_2nd_train.keras.zip"
     saveModelWithMetadata(model,model_w_metadata_path, metadata=new_metadata,previous_metadata=metadata)
@@ -112,14 +108,17 @@ def main():
     #try with a model trainined 2 previous times
     model, metadata = loadModelWithMetadata(model_w_metadata_path)
 
-    training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model, data=data,
-                                                                                        previous_metadata=metadata,
-                                                                                        filter_CHOICE='moving_average',
-                                                                                        scaling_CHOICE='minmax',
-                                                                                        seed_value=42)
+    #create and transform with a scaler that encompasses the different data
+    formatted_data1, outputs, _ = format_data(different_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],
+                                        splitvec=[0, 0],add_scale=True)
+    #bio idx and names ordered both needed because bio index describes latest ds, names_ordered describes previous. A little clunky.
+    training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=formatted_data1,
+                           bio_idx = outputs["datatype_indices"]["bio_indices"],
+                           names_ordered=metadata['model_col_names'],
+                           seed_value=42)
 
     new_metadata = training_outputs_finetuning
-    new_metadata["description"] = 'Improve upon the last AGAIN. Used minmax for scaling, moving average for filter choice'
+    new_metadata["description"] = 'tweak last model'
 
     #if you don't want to keep previous model in metadata, can delete it...
     del new_metadata['model']
