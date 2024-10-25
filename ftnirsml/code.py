@@ -403,8 +403,6 @@ def InferenceMode(model, data, scaler,names_ordered):
 
     padded_data, _ = pad_bio_columns(data, names_ordered['bio_column_names_ordered'],
                                                             total_bio_columns=len(names_ordered['bio_column_names_ordered_padded']))
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
 
     # Run inference
     prediction = model.predict([padded_data[names_ordered['bio_column_names_ordered_padded']], data[names_ordered['wn_columns_names_ordered']]])
@@ -1041,9 +1039,9 @@ def modelToZipIO(model, model_name,metadata_all):
 
     return zipdest
 
-def packModelWithMetadata(model, model_path,metadata=None, previous_metadata = None,mandate_some_metadata_fields=True):
+def packModelWithMetadata(model, model_long_name,metadata=None, previous_metadata = None,mandate_some_metadata_fields=True):
 
-    model_name = os.path.basename(model_path)[:-4]
+    model_name = os.path.basename(model_long_name)[:-4]
     metadata_all = formatMetadata(metadata=metadata, previous_metadata=previous_metadata,mandate_some_fields=mandate_some_metadata_fields)
     zipdest = modelToZipIO(model, model_name, metadata_all =metadata_all)
 

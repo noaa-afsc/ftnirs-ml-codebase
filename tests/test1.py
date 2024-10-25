@@ -4,7 +4,6 @@ import numpy as np
 import seaborn as sns
 import pandas as pd
 from copy import deepcopy
-from tensorflow.keras.models import load_model
 
 # Set seeds for reproducibility
 np.random.seed(42)
@@ -111,6 +110,7 @@ def main():
     #create and transform with a scaler that encompasses the different data
     formatted_data1, outputs, _ = format_data(different_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],
                                         splitvec=[0, 0],add_scale=True)
+
     #bio idx and names ordered both needed because bio index describes latest ds, names_ordered describes previous. A little clunky.
     training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=formatted_data1,
                            bio_idx = outputs["datatype_indices"]["bio_indices"],
@@ -120,11 +120,8 @@ def main():
     new_metadata = training_outputs_finetuning
     new_metadata["description"] = 'tweak last model'
 
-    #if you don't want to keep previous model in metadata, can delete it...
-    del new_metadata['model']
-
     model_w_metadata_path = "./Models/my_model_with_metadata_3rd_train.keras.zip"
-    saveModelWithMetadata(model, model_w_metadata_path, metadata=new_metadata, previous_metadata=metadata)
+    saveModelWithMetadata(new_metadata['model'], model_w_metadata_path, metadata=new_metadata, previous_metadata=metadata)
 
     model, metadata = loadModelWithMetadata(model_w_metadata_path)
 
