@@ -1054,14 +1054,18 @@ def saveModelWithMetadata(model, model_path,metadata=None, previous_metadata = N
     with open(model_path, "wb") as f:
         f.write(zipdest.getvalue())
 
-def loadModelWithMetadata(path):
+def loadModelWithMetadata(zip_obj_or_path,model_name):
+
+    #if don't supply model name, assume it inherits from the path name
+    if model_name is None:
+        model_name = os.path.basename(zip_obj_or_path[:-4])
 
     with tempfile.TemporaryDirectory() as tmpdir:
 
-        with zipfile.ZipFile(path,"r") as zipf:
+        with zipfile.ZipFile(zip_obj_or_path,"r") as zipf:
             zipf.extractall(tmpdir)
 
-        model = load_model(os.path.join(tmpdir,os.path.basename(path[:-4])))
+        model = load_model(os.path.join(tmpdir,model_name)
         with open(os.path.join(tmpdir,"metadata.pickle"),"rb") as f:
             metadata = pickle.loads(base64.b64decode(f.read()))
 
