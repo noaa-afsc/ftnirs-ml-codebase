@@ -1065,7 +1065,7 @@ def loadModelWithMetadata(zip_obj_or_path,model_name):
         with zipfile.ZipFile(zip_obj_or_path,"r") as zipf:
             zipf.extractall(tmpdir)
 
-        model = load_model(os.path.join(tmpdir,model_name)
+        model = load_model(os.path.join(tmpdir,model_name))
         with open(os.path.join(tmpdir,"metadata.pickle"),"rb") as f:
             metadata = pickle.loads(base64.b64decode(f.read()))
 
