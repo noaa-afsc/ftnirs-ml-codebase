@@ -842,7 +842,6 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
     model.summary()
 
     training_outputs = {
-        'trained_model': model,
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
@@ -851,7 +850,7 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
     }
 
     #could return top 3 in extra outputs, etc.
-    return training_outputs, {best_hp}
+    return model,training_outputs, {best_hp}
 
 # Training Mode without Hyperband
 def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35, batch_size = 32, seed_value=42,total_bio_columns=None,extra_bio_columns=None, \
@@ -890,7 +889,6 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
     model.summary()
     
     training_outputs = {
-        'trained_model': model,
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
@@ -898,7 +896,7 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
         'model_col_names': {'bio_column_names_ordered':bio_names_ordered,'bio_column_names_ordered_padded':bio_names_ordered_padded,'wn_columns_names_ordered':wn_columns_names_ordered}
     }
     
-    return training_outputs, {}
+    return model,training_outputs, {}
 
 # Training Mode with Fine-tuning 
 def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch_size = 32, seed_value=42):
@@ -926,17 +924,16 @@ def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch
     
     # Prepare the output
     training_outputs = {
-        'trained_model': model,
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
         'r2_score': r2,
         'model_col_names': {'bio_column_names_ordered': bio_names_ordered,
                             'bio_column_names_ordered_padded': bio_names_ordered_padded,
-                            'wn_columns_names_ordered': names_ordered['bio_column_names_ordered_padded']}
+                            'wn_columns_names_ordered': names_ordered['wn_columns_names_ordered']}
     }
     
-    return training_outputs, {}
+    return model,training_outputs, {}
 
 # Spectra preprocessing function 
 def preprocess_spectra(data, filter_type='savgol'):
@@ -1054,15 +1051,15 @@ def saveModelWithMetadata(model, model_path,metadata=None, previous_metadata = N
     with open(model_path, "wb") as f:
         f.write(zipdest.getvalue())
 
-def loadModelWithMetadata(zip_obj_or_path,model_name):
+def loadModelWithMetadata(zip_path,model_name=None):
 
     #if don't supply model name, assume it inherits from the path name
     if model_name is None:
-        model_name = os.path.basename(zip_obj_or_path[:-4])
+        model_name = os.path.basename(zip_path[:-4])
 
     with tempfile.TemporaryDirectory() as tmpdir:
 
-        with zipfile.ZipFile(zip_obj_or_path,"r") as zipf:
+        with zipfile.ZipFile(zip_path,"r") as zipf:
             zipf.extractall(tmpdir)
 
         model = load_model(os.path.join(tmpdir,model_name))
