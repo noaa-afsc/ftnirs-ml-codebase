@@ -732,10 +732,6 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_col
     #(maybe that's an optional behavior, alternative behavior would be to include extra columns as simply informational?)
     data,dt_indices = autoOneHot(data)
 
-    #check we didn't exceed total_bio columns with one hot expansion
-    if total_bio_columns is not None:
-        assert dt_indices[2] <= total_bio_columns
-
     data = preprocess_spectra(data, filter_CHOICE)
 
     #todo
