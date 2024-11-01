@@ -56,14 +56,14 @@ ONE_HOT_FLAG = '_ohc'
 #attributes? Yeah, I think that is ok.
 
 TRAINING_APPROACHES = {"Basic model":{'description':"basic, customizable model",'finetunable':True, "parameters": \
-        {'max-pooling':{"display_name":"Use maximum pooling: False","data_type":"boolean","data_type2":bool,"min_value":False,"max_value":True,"default_value":False},
-        "num_conv_layers":{"display_name":"Number of convolutional layers:","data_type":"number","data_type2":int,"min_value":None,"max_value":None,"default_value":False},
-        "kernel_size":{"display_name":"Kernel size:","data_type":"number","data_type2":int,"min_value":None,"max_value":None,"default_value":False},
-        "stride_size":{"display_name":"Stride size:","data_type":"number","data_type2":int,"min_value":None,"max_value":None,"default_value":False},
-        "dropout_rate":{"display_name":"Dropout rate:", "data_type":"number", "data_type2":float,"min_value":None,"max_value":None,"default_value":False},
-        "num_filters":{"display_name":"Number of filters:", "data_type":"number", "data_type2":int,"min_value":None,"max_value":None,"default_value":False},
-        "dense_units":{"display_name":"Number of dense units:", "data_type":"number", "data_type2":int,"min_value":None,"max_value":None,"default_value":False},
-        "dropout_rate2":{"display_name":"Dropout rate (2):", "data_type":"number", "data_type2":float,"min_value":None,"max_value":None,"default_value":False}}},
+        {'use_max_pooling':{"display_name":"Use maximum pooling: False","data_type":"boolean","data_type2":bool,"min_value":False,"max_value":True,"default_value":False},
+        "num_conv_layers":{"display_name":"Number of convolutional layers:","data_type":"number","data_type2":int,"min_value":None,"max_value":None,"default_value":2},
+        "kernel_size":{"display_name":"Kernel size:","data_type":"number","data_type2":int,"min_value":None,"max_value":None,"default_value":101},
+        "stride_size":{"display_name":"Stride size:","data_type":"number","data_type2":int,"min_value":None,"max_value":None,"default_value":51},
+        "dropout_rate":{"display_name":"Dropout rate:", "data_type":"number", "data_type2":float,"min_value":None,"max_value":None,"default_value":0.1},
+        "num_filters":{"display_name":"Number of filters:", "data_type":"number", "data_type2":int,"min_value":None,"max_value":None,"default_value":50},
+        "dense_units":{"display_name":"Number of dense units:", "data_type":"number", "data_type2":int,"min_value":None,"max_value":None,"default_value":256},
+        "dropout_rate_2":{"display_name":"Dropout rate (2):", "data_type":"number", "data_type2":float,"min_value":None,"max_value":None,"default_value":0.1}}},
                        "hyperband tuning model":{'description':"A version of the basic model with hyperband parameter tuning",'finetunable':False,"default_value":False}}
 
 
