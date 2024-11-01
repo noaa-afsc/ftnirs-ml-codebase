@@ -653,7 +653,7 @@ def hash_dataset(data: pd.DataFrame) -> str:
 
     return data_hash
 
-def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, total_bio_columns=None, interp_minmaxstep = None, seed_value=42,add_scale=False):
+def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, interp_minmaxstep = None, seed_value=42,add_scale=False):
     data = deepcopy(data)
     dummy_col = []
     np.random.seed(seed_value)
