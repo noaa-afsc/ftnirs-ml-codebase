@@ -244,7 +244,7 @@ def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_names_ordered
                                   data.loc[data[SPLITNAME] == 'validation',wn_columns_names_ordered]],
                                   data.loc[data[SPLITNAME] == 'validation',RESPONSE_COLUMNS]],
                  verbose=1,
-                 callbacks=kwargs.get('callbacks'))
+                 **kwargs)
 
     model = tuner.get_best_models(num_models=1)[0]
     best_hp = tuner.get_best_hyperparameters()[0]
@@ -974,7 +974,7 @@ def final_training_pass(model, data, nb_epoch, batch_size,bio_names_ordered,wn_c
                                    data.loc[data[SPLITNAME] == 'validation', wn_columns_names_ordered]],
                                   data.loc[data[SPLITNAME] == 'validation', RESPONSE_COLUMNS]],
                  verbose=1,
-                 callbacks=kwargs.get('callbacks')).history
+                 **kwargs).history
     
     return history
 
