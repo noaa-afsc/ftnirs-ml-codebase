@@ -226,12 +226,13 @@ def build_model(hp, input_dim_A, input_dim_B):
     return model
 
 # Training, evaluation, and plotting functions
-def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_names_ordered,wn_columns_names_ordered):
+def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_names_ordered,wn_columns_names_ordered,**kwargs):
 
-    earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
+    #earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
 
-    print(bio_names_ordered)
-    print(data[bio_names_ordered])
+    #callbacks_all = [earlystop] + custom_callbacks
+
+    #print(callbacks_all)
 
     tuner.search([data.loc[data[SPLITNAME] == 'training', bio_names_ordered],
                   data.loc[data[SPLITNAME] == 'training',wn_columns_names_ordered]],
@@ -243,7 +244,7 @@ def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_names_ordered
                                   data.loc[data[SPLITNAME] == 'validation',wn_columns_names_ordered]],
                                   data.loc[data[SPLITNAME] == 'validation',RESPONSE_COLUMNS]],
                  verbose=1,
-                 callbacks=[earlystop])
+                 callbacks=kwargs.get('callbacks'))
 
     model = tuner.get_best_models(num_models=1)[0]
     best_hp = tuner.get_best_hyperparameters()[0]
@@ -802,7 +803,7 @@ def pad_bio_columns(data,bio_names_ordered,total_bio_columns=None,extra_bio_colu
     return data,list(bio_data.columns)
 
 # Training Mode with Hyperband 
-def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, batch_size = 32, seed_value=42):
+def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, batch_size = 32, seed_value=42,**kwargs):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
@@ -830,8 +831,8 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
             seed=seed_value
         )
 
-        model, best_hp = train_and_optimize_model(tuner, padded_data, max_epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered)
-        history = final_training_pass(model, padded_data, max_epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered)
+        model, best_hp = train_and_optimize_model(tuner, padded_data, max_epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
+        history = final_training_pass(model, padded_data, max_epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
 
     evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
 
@@ -850,7 +851,8 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
 
 # Training Mode without Hyperband
 def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35, batch_size = 32, seed_value=42,total_bio_columns=None,extra_bio_columns=None, \
-                                 num_conv_layers = 2, kernel_size = 101, stride_size = 51, dropout_rate = 0.1, use_max_pooling = False, num_filters = 50, dense_units = 256, dropout_rate_2 = 0.1):
+                                 num_conv_layers = 2, kernel_size = 101, stride_size = 51, dropout_rate = 0.1, use_max_pooling = False, num_filters = 50, dense_units = 256, dropout_rate_2 = 0.1,\
+                                 **kwargs):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
@@ -877,7 +879,7 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
         dropout_rate_2
     )
 
-    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered)
+    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered,**kwargs)
     
     evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
     print(f"Evaluation: {evaluation}, R2: {r2}")
@@ -895,7 +897,7 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
     return model,training_outputs, {}
 
 # Training Mode with Fine-tuning 
-def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch_size = 32, seed_value=42):
+def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch_size = 32, seed_value=42,**kwargs):
 
     bio_names_ordered = [data.columns[x] for x in bio_idx] #this gets us the current dataset columns. can assume due to format_data dummy col behavior that previous columns are represented and values are scaled properly to
     #represent MISSING_DATA_VALUE.
@@ -910,7 +912,7 @@ def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
 
-    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])
+    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'],**kwargs)
     
     # Evaluate the model
     evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])
@@ -956,9 +958,11 @@ def preprocess_spectra(data, filter_type='savgol'):
     return data
 
 # Final training pass function
-def final_training_pass(model, data, nb_epoch, batch_size,bio_names_ordered,wn_columns_names_ordered):
+def final_training_pass(model, data, nb_epoch, batch_size,bio_names_ordered,wn_columns_names_ordered,**kwargs):
 
-    earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
+    #earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
+
+    #callbacks_all = [earlystop] + custom_callbacks
 
     history = model.fit([data.loc[data[SPLITNAME] == 'training', bio_names_ordered],
                   data.loc[data[SPLITNAME] == 'training', wn_columns_names_ordered]],
@@ -970,7 +974,7 @@ def final_training_pass(model, data, nb_epoch, batch_size,bio_names_ordered,wn_c
                                    data.loc[data[SPLITNAME] == 'validation', wn_columns_names_ordered]],
                                   data.loc[data[SPLITNAME] == 'validation', RESPONSE_COLUMNS]],
                  verbose=1,
-                 callbacks=[earlystop]).history
+                 callbacks=kwargs.get('callbacks')).history
     
     return history
 

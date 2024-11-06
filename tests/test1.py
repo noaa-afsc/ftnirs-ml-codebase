@@ -4,6 +4,16 @@ import numpy as np
 import seaborn as sns
 import pandas as pd
 from copy import deepcopy
+from tensorflow.keras.callbacks import Callback as tk_callbacks
+from tensorflow.keras.callbacks import EarlyStopping
+
+TOTAL_EPOCH = 0
+class CustomCallback(tk_callbacks):
+
+    def on_epoch_begin(self,epoch, logs=None):
+        global TOTAL_EPOCH
+        TOTAL_EPOCH=TOTAL_EPOCH+1
+        print("TOTAL EPOCH:"+str(TOTAL_EPOCH))
 
 # Set seeds for reproducibility
 np.random.seed(42)
@@ -37,14 +47,18 @@ def main():
         bio_idx = format_metadata["datatype_indices"]["bio_indices"],
         wn_idx = format_metadata["datatype_indices"]["wn_indices"],
         extra_bio_columns=5,
-        max_epochs = 1
+        max_epochs = 5,
+        callbacks=[CustomCallback()]
     )
+
+    earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
     model2,training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
         data=formatted_data,
         bio_idx = format_metadata["datatype_indices"]["bio_indices"],
         wn_idx = format_metadata["datatype_indices"]["wn_indices"],
-        total_bio_columns=100
+        total_bio_columns=100,
+        callbacks=[CustomCallback(),earlystop]
     )
 
     metadata = training_outputs_manual
