@@ -18,15 +18,10 @@ from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from sklearn.metrics import r2_score, mean_squared_error
 from math import sqrt
-from keras_tuner.tuners import BayesianOptimization, Hyperband
-from tensorflow.keras.utils import plot_model
+from keras_tuner.tuners import  Hyperband
 from tensorflow.keras.layers import LeakyReLU, Input, Dense, Dropout, Flatten, Conv1D, MaxPooling1D, concatenate
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras import regularizers
-from tensorflow.keras.metrics import MeanSquaredError, MeanAbsoluteError
-from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from scipy.ndimage import uniform_filter1d, gaussian_filter1d, median_filter
 from copy import deepcopy
 #PyWavelets
@@ -49,35 +44,35 @@ sns.set(rc={'figure.figsize': (10, 6)})
 sns.set(style="whitegrid", font_scale=2)
 
 # Filter functions
-def savgol_filter_func(data, window_length=17, polyorder=2, deriv=1):
+def savgol(data, window_length=17, polyorder=2, deriv=1):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
 
     return savgol_filter(data, window_length=window_length, polyorder=polyorder, deriv=deriv)
 
-def moving_average_filter(data, size=5):
+def moving_average(data, size=5):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
 
     return uniform_filter1d(data, size=size, axis=1)
 
-def gaussian_filter_func(data, sigma=2):
+def gaussian(data, sigma=2):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
 
     return gaussian_filter1d(data, sigma=sigma, axis=1)
 
-def median_filter_func(data, size=5):
+def median(data, size=5):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
 
     return median_filter(data, size=(1, size))
 
-def wavelet_filter_func(data, wavelet='db1', level=1):
+def wavelet(data, wavelet='db1', level=1):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
@@ -88,7 +83,7 @@ def wavelet_filter_func(data, wavelet='db1', level=1):
         return pywt.waverec(coeffs, wavelet)
     return np.apply_along_axis(apply_wavelet, axis=1, arr=data)
 
-def fourier_filter_func(data, threshold=0.1):
+def fourier(data, threshold=0.1):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
@@ -100,45 +95,50 @@ def fourier_filter_func(data, threshold=0.1):
         return np.fft.ifft(fft_data).real
     return np.apply_along_axis(apply_fft, axis=1, arr=data)
 
-def pca_filter_func(data, n_components=5):
+def pca(data, n_components=5):
 
     #required to not have side effects on the original data object
     data = deepcopy(data)
 
-    pca = PCA(n_components=n_components)
-    transformed = pca.fit_transform(data)
-    return pca.inverse_transform(transformed)
+    pca_ = PCA(n_components=n_components)
+    transformed = pca_.fit_transform(data)
+    return pca_.inverse_transform(transformed)
 
 # Scaling functions
-def apply_normalization(data, columns):
 
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    normalizer = Normalizer()
-    data[columns] = normalizer.fit_transform(data[columns])
-    return data
-
-def create_scale(data,scaler):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
+def assign_scaler(scaler):
     if isinstance(scaler, str):
 
         scalers = {
-            'standard': StandardScaler,
-            'minmax': MinMaxScaler,
-            'maxabs': MaxAbsScaler,
-            'robust': RobustScaler,
-            'normalize': Normalizer  # Note: Normalizer might not be suitable for y, use with caution
+            'StandardScaler': StandardScaler,
+            'MinMaxScaler': MinMaxScaler,
+            'MaxAbsScaler': MaxAbsScaler,
+            'RobustScaler': RobustScaler,
+            'Normalizer': Normalizer  # Note: Normalizer might not be suitable for y, use with caution
         }
-
 
         if scaler not in scalers:
             raise ValueError(f"Unsupported scaling method: {scaler}")
 
-        scaler = scalers[scaler]()
+        return scalers[scaler]()
+
+def create_scale(data,bio_scaler,response_scaler=None,wn_scaler=None):
+
+    if wn_scaler is None:
+        wn_scaler = bio_scaler
+
+    if response_scaler is None:
+        response_scaler = bio_scaler
+
+    #required to not have side effects on the original data object
+    data = deepcopy(data)
+
+    if isinstance(bio_scaler, str):
+        bio_scaler = assign_scaler(bio_scaler)
+    if isinstance(wn_scaler, str):
+        wn_scaler = assign_scaler(wn_scaler)
+    if isinstance(response_scaler, str):
+        response_scaler = assign_scaler(response_scaler)
 
     #otherwise, assume the object is the correct scaler object
 
@@ -151,9 +151,10 @@ def create_scale(data,scaler):
 
     if any([WN_MATCH in m for m in data.columns]):
         _, _, _, _, _, wn_inds = wnExtract(data.columns)
-        column_scaler = ColumnTransformer([(x,scaler,[x]) for x in [data.columns[m] for m in range(min(wn_inds))]]+[(WN_STRING_NAME,scaler,[data.columns[n] for n in wn_inds])])
+
+        column_scaler = ColumnTransformer([(x,bio_scaler if x not in RESPONSE_COLUMNS else response_scaler,[x]) for x in [data.columns[m] for m in range(min(wn_inds))]]+[(WN_STRING_NAME,wn_scaler,[data.columns[n] for n in wn_inds])])
     else:
-        column_scaler = ColumnTransformer([(x, scaler, [x]) for x in [m for m in data.columns]])
+        column_scaler = ColumnTransformer([(x, bio_scaler if x not in RESPONSE_COLUMNS else response_scaler, [x]) for x in [m for m in data.columns]])
 
     column_scaler.set_output(transform='pandas')
     column_scaler.fit(data)
@@ -227,12 +228,6 @@ def build_model(hp, input_dim_A, input_dim_B):
 
 # Training, evaluation, and plotting functions
 def train_and_optimize_model(tuner, data, nb_epoch, batch_size,bio_names_ordered,wn_columns_names_ordered,**kwargs):
-
-    #earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
-
-    #callbacks_all = [earlystop] + custom_callbacks
-
-    #print(callbacks_all)
 
     tuner.search([data.loc[data[SPLITNAME] == 'training', bio_names_ordered],
                   data.loc[data[SPLITNAME] == 'training',wn_columns_names_ordered]],
@@ -654,10 +649,9 @@ def hash_dataset(data: pd.DataFrame) -> str:
 
     return data_hash
 
-def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, interp_minmaxstep = None, seed_value=42,add_scale=False):
+def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=None,response_scaler=None,splitvec=None, interp_minmaxstep = None,add_scale=False):
     data = deepcopy(data)
     dummy_col = []
-    np.random.seed(seed_value)
 
     if isinstance(data,list):
         og_data_hashes = [hash_dataset(i) for i in data]
@@ -738,8 +732,15 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, interp_minmax
     #todo
     #let's do it this way: feed in the column names you want to scale to create_scale, then have a merge
     #function to replace the scaled values.
+
+
     if isinstance(scaler,str):
-        data_mod, scaler = create_scale(data[[[i for i in data.columns][x] for x in dt_indices[0]+dt_indices[2]+dt_indices[3]]], scaler)
+
+        bio_scaler = bio_scaler if bio_scaler is not None else scaler
+        wn_scaler = wn_scaler if wn_scaler is not None else scaler
+        response_scaler = response_scaler if response_scaler is not None else scaler
+
+        data_mod, scaler = create_scale(data[[[i for i in data.columns][x] for x in dt_indices[0]+dt_indices[2]+dt_indices[3]]], bio_scaler,wn_scaler,response_scaler)
         data[data_mod.columns]=data_mod
 
     else:
@@ -754,13 +755,17 @@ def format_data(data,filter_CHOICE=None,scaler=None,splitvec=None, interp_minmax
         cols_in_order = []
         # scale existing
         for i in list(range(1,len(scaler)+1))[::-1]:
-            data_mod = transform(data, scaler[-i]) # list(data.iloc[:, dt_indices[1]].columns), dt_indices[1]
+            data_mod = transform(data, scaler[-i]) #list(data.iloc[:, dt_indices[1]].columns), dt_indices[1]
             data[data_mod.columns] = data_mod
 
         if add_scale and len(new_features) > 0:
 
             # create a scaler for new columns
-            data_new,new_scaler = create_scale(data[new_features], scaler[0].transformers[0][1]) #assume for now use the original scaler approach, but don't have to.
+            #import code
+            #code.interact(local=dict(globals(), **locals()))
+            if bio_scaler is None:
+                bio_scaler = scaler[0].transformers[dt_indices[2][0]][1]#For new columns, since they have to be bio columns currently, grab the latest bio column scaler by default. but can also supply this explicitly.
+            data_new,new_scaler = create_scale(data[new_features],bio_scaler)
             scaler.append(new_scaler[0])
 
             data[data_new.columns] = data_new
@@ -803,7 +808,7 @@ def pad_bio_columns(data,bio_names_ordered,total_bio_columns=None,extra_bio_colu
     return data,list(bio_data.columns)
 
 # Training Mode with Hyperband 
-def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, batch_size = 32, seed_value=42,**kwargs):
+def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, epochs = 30, batch_size = 32, seed_value=42,**kwargs):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
@@ -831,8 +836,8 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
             seed=seed_value
         )
 
-        model, best_hp = train_and_optimize_model(tuner, padded_data, max_epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
-        history = final_training_pass(model, padded_data, max_epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
+        model, best_hp = train_and_optimize_model(tuner, padded_data, epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
+        history = final_training_pass(model, padded_data, epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
 
     evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
 
@@ -942,16 +947,16 @@ def preprocess_spectra(data, filter_type='savgol'):
     _, _, _, _, _, wn_inds = wnExtract(data.columns)
 
     filter_functions = {
-        'savgol': savgol_filter_func,
-        'moving_average': moving_average_filter,
-        'gaussian': gaussian_filter_func,
-        'median': median_filter_func,
-        'wavelet': wavelet_filter_func,
-        'fourier': fourier_filter_func,
-        'pca': pca_filter_func
+        'savgol': savgol,
+        'moving_average': moving_average,
+        'gaussian': gaussian,
+        'median': median,
+        'wavelet': wavelet,
+        'fourier': fourier,
+        'pca': pca
     }
     
-    filter_func = filter_functions.get(filter_type, savgol_filter_func)
+    filter_func = filter_functions.get(filter_type, savgol)
 
     data.iloc[:, wn_inds] = filter_func(data.iloc[:, wn_inds].values)
 
@@ -959,10 +964,6 @@ def preprocess_spectra(data, filter_type='savgol'):
 
 # Final training pass function
 def final_training_pass(model, data, nb_epoch, batch_size,bio_names_ordered,wn_columns_names_ordered,**kwargs):
-
-    #earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
-
-    #callbacks_all = [earlystop] + custom_callbacks
 
     history = model.fit([data.loc[data[SPLITNAME] == 'training', bio_names_ordered],
                   data.loc[data[SPLITNAME] == 'training', wn_columns_names_ordered]],

@@ -40,16 +40,18 @@ def main():
 
     #artifacts: scalers and metadata for the scalers.
     #og_data_info: identifying data back to the original dataset, like dataset hashes
-    formatted_data,format_metadata,og_data_info = format_data(data,filter_CHOICE='savgol',scaler='minmax',splitvec=[40,70])
+    formatted_data,format_metadata,og_data_info = format_data(data,filter_CHOICE='savgol',scaler='MinMaxScaler',splitvec=[40,70])
 
     model1,training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
         data=formatted_data,
         bio_idx = format_metadata["datatype_indices"]["bio_indices"],
         wn_idx = format_metadata["datatype_indices"]["wn_indices"],
-        extra_bio_columns=5,
-        max_epochs = 5,
+        total_bio_columns=100,
+        #extra_bio_columns=5,
+        max_epochs = 1, #,
         callbacks=[CustomCallback()]
     )
+
 
     earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
@@ -67,6 +69,7 @@ def main():
     metadata["description"] = 'Very cool model, the concept came to me in a dream last night.'
 
     #test out inference on the same dataset as training
+
     prediction1 = InferenceMode(model2,formatted_data.loc[1:5], metadata['scaler'],metadata['model_col_names']) #should be the same as 1
     print(prediction1)
 
@@ -121,8 +124,7 @@ def main():
     #try with a model trainined 2 previous times
     model3, metadata2 = loadModelWithMetadata(model_w_metadata_path)
 
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
+
 
     #create and transform with a scaler that encompasses the different data
     formatted_data1, outputs, _ = format_data(different_data, filter_CHOICE=metadata2[-1]['filter'], scaler=metadata2[-1]['scaler'],splitvec=[40, 70],add_scale=True)

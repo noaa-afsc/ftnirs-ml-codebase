@@ -64,7 +64,8 @@ TRAINING_APPROACHES = {"Basic model":{'description':"basic, customizable model",
         "num_filters":{"display_name":"Number of filters:", "data_type":"number", "data_type2":int,"min_value":None,"max_value":None,"default_value":50},
         "dense_units":{"display_name":"Number of dense units:", "data_type":"number", "data_type2":int,"min_value":None,"max_value":None,"default_value":256},
         "dropout_rate_2":{"display_name":"Dropout rate (2):", "data_type":"number", "data_type2":float,"min_value":None,"max_value":None,"default_value":0.1}}},
-                       "hyperband tuning model":{'description':"A version of the basic model with hyperband parameter tuning",'finetunable':False,"default_value":False}}
+                       "hyperband tuning model":{'description':"A version of the basic model with hyperband parameter tuning",'finetunable':False,"default_value":False, "parameters": \
+                               {"hyperband_max_epoch":{"display_name":"hyperband max epoch:","data_type":"number","data_type2":int,"min_value":0,"max_value":None,"default_value":35}}}}
 
 
 #other columns won't be defined, by definition, we will not know the appropriate datatype and instead will have logic to guess between
