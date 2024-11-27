@@ -12,7 +12,7 @@ import warnings
 import hashlib
 
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, Normalizer, RobustScaler, MaxAbsScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, Normalizer, RobustScaler, MaxAbsScaler, FunctionTransformer
 from matplotlib import pyplot as plt
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
@@ -42,6 +42,9 @@ tf.random.set_seed(42)
 # Seaborn configuration
 sns.set(rc={'figure.figsize': (10, 6)})
 sns.set(style="whitegrid", font_scale=2)
+
+#define a do nothing scaler, for use in one-hot encoding, to allow for columns names to still be registered and handled equally by
+#the transformer protocol
 
 # Filter functions
 def savgol(data, window_length=17, polyorder=2, deriv=1):
@@ -152,9 +155,9 @@ def create_scale(data,bio_scaler,response_scaler=None,wn_scaler=None):
     if any([WN_MATCH in m for m in data.columns]):
         _, _, _, _, _, wn_inds = wnExtract(data.columns)
 
-        column_scaler = ColumnTransformer([(x,bio_scaler if x not in RESPONSE_COLUMNS else response_scaler,[x]) for x in [data.columns[m] for m in range(min(wn_inds))]]+[(WN_STRING_NAME,wn_scaler,[data.columns[n] for n in wn_inds])])
+        column_scaler = ColumnTransformer([(x,FunctionTransformer(func=None) if ONE_HOT_FLAG in x else bio_scaler if x not in RESPONSE_COLUMNS else response_scaler,[x]) for x in [data.columns[m] for m in range(min(wn_inds))]]+[(WN_STRING_NAME,wn_scaler,[data.columns[n] for n in wn_inds])])
     else:
-        column_scaler = ColumnTransformer([(x, bio_scaler if x not in RESPONSE_COLUMNS else response_scaler, [x]) for x in [m for m in data.columns]])
+        column_scaler = ColumnTransformer([(x,FunctionTransformer(func=None) if ONE_HOT_FLAG in x else bio_scaler if x not in RESPONSE_COLUMNS else response_scaler, [x]) for x in [m for m in data.columns]])
 
     column_scaler.set_output(transform='pandas')
     column_scaler.fit(data)
@@ -691,8 +694,18 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
         #also while in this conditional, can add in extra bio columns that will be needed for both inference and fine-tune
 
         if not all([x in data_bio_columns for x in model_bio_features]):
-            dummy_col = [col for col in model_bio_features if col not in data_bio_columns]
+            dummy_col = [col for col in model_bio_features if col not in data_bio_columns and ONE_HOT_FLAG not in col]
             data[dummy_col] = MISSING_DATA_VALUE
+            #for those with ohc in col.
+            model_one_hot_features = set(["".join(col.split("_")[:-2]) for col in model_bio_features if ONE_HOT_FLAG in col])
+            for m in model_one_hot_features:
+                present_one_hot = [f"{m}{ONE_HOT_FLAG}_{x}" for x in data[m].unique()]
+                missing_one_hot = [col for col in [l for l in model_bio_features if m in l and ONE_HOT_FLAG in l] if col not in present_one_hot]
+                data[missing_one_hot] = 0
+
+        # for one hot: this should indeed consider whether certain categories are no longer present in the provided column- for instance, in the sex category,
+        # if there is M,F and I (immature), we will want to establish here if 'I' column needs to be added as dummy col. for one hot, this should be given a value
+        # of 0 instead of the MISSING_DATA_VALUE.
 
     if not SPLITNAME in data and splitvec is None:
         raise ValueError(f"Either a column of name: {SPLITNAME} or a 'splitvec' argument of [x,y], where x-0 = train %, x-y = val %, and 100-y = test % must be provided")
@@ -722,17 +735,12 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
     else:
         raise ValueError(f"Data must contain an {IDNAME} column to distinguish it from all other samples in dataset(s)")
 
-
     #Also require string bio columns to be marked as categorical, and have the same one-hot behavior applied
     #(maybe that's an optional behavior, alternative behavior would be to include extra columns as simply informational?)
     data,dt_indices = autoOneHot(data)
 
+
     data = preprocess_spectra(data, filter_CHOICE)
-
-    #todo
-    #let's do it this way: feed in the column names you want to scale to create_scale, then have a merge
-    #function to replace the scaled values.
-
 
     if isinstance(scaler,str):
 
@@ -753,6 +761,11 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
         new_features = [x for x in data_bio_columns if x not in model_bio_features and 'UNDECLARED_' not in x]
 
         cols_in_order = []
+
+        #if splitvec == [39, 61]:
+        #    import code
+        #    code.interact(local=dict(globals(), **locals()))
+
         # scale existing
         for i in list(range(1,len(scaler)+1))[::-1]:
             data_mod = transform(data, scaler[-i]) #list(data.iloc[:, dt_indices[1]].columns), dt_indices[1]
@@ -839,6 +852,7 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
         model, best_hp = train_and_optimize_model(tuner, padded_data, epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
         history = final_training_pass(model, padded_data, epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
 
+
     evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
 
     model.summary()
@@ -890,6 +904,9 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
     print(f"Evaluation: {evaluation}, R2: {r2}")
     
     model.summary()
+
+    import code
+    code.interact(local=dict(globals(), **locals()))
     
     training_outputs = {
         'training_history': history,
@@ -1141,28 +1158,6 @@ def plot_residuals_heatmap(y_test, preds):
     plt.xlabel("Samples")
     plt.ylabel("Residuals")
     plt.show()
-
-import logging
-
-def setup_logging(logfile='model_training.log'):
-    logging.basicConfig(filename=logfile, 
-                        level=logging.INFO, 
-                        format='%(asctime)s - %(levelname)s - %(message)s')
-
-def log_training_event(event_message):
-    logging.info(event_message)
-
-def handle_missing_data(data):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    if data.isnull().values.any():
-        missing_data_report = data.isnull().sum()
-        print(f"Missing Data Report:\n{missing_data_report}")
-        # Filling missing values with mean
-        data.fillna(data.mean(), inplace=True)
-    return data
 
 def explain_model_predictions(model, X_test_biological, X_test_wavenumbers):
     explainer = shap.KernelExplainer(model.predict, [X_test_biological, X_test_wavenumbers])

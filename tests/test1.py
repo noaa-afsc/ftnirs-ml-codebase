@@ -1,4 +1,4 @@
-from ftnirsml.code import saveModelWithMetadata,loadModelWithMetadata,TrainingModeWithHyperband,TrainingModeWithoutHyperband,InferenceMode,TrainingModeFinetuning,format_data
+from ftnirsml.code import saveModelWithMetadata,loadModelWithMetadata,TrainingModeWithHyperband,TrainingModeWithoutHyperband,InferenceMode,TrainingModeFinetuning,format_data,plot_training_history,plot_residuals_heatmap
 import tensorflow as tf
 import numpy as np
 import seaborn as sns
@@ -144,6 +144,35 @@ def main():
     saveModelWithMetadata(model4, model_w_metadata_path, metadata=new_metadata, previous_metadata=metadata2)
 
     model, metadata3 = loadModelWithMetadata(model_w_metadata_path)
+
+    #attempt to run a model trained using one hot expansion (aware of already expanded columns) back on the original data (non expanded columns)
+    #filepath1 = './Data/NWFSC_data_sample_trunc.csv'
+    #different_data = pd.read_csv(filepath1)
+    formatted_data1, outputs, _ = format_data(different_data, filter_CHOICE=metadata3[-1]['filter'],
+                                              scaler=metadata3[-1]['scaler'], splitvec=[0, 0])
+
+    prediction1_alt = InferenceMode(model, formatted_data1.loc[1:5], metadata3[-1]['scaler'],metadata3[-1]['model_col_names'])
+
+    #test condition: remove a category for a one-hot encoded variable to see if it is handled correctly.
+
+    #first, lets check that this data doesn't have side effects...
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
+    different_data['sex'] = different_data['sex'].replace('M', 'I') #swap out a category to simulate both removing and adding.
+
+    formatted_data1, outputs, _ = format_data(different_data, filter_CHOICE=metadata3[-1]['filter'],
+                                              scaler=metadata3[-1]['scaler'], splitvec=[39, 61],add_scale=True)
+
+    #bio idx and names ordered both needed because bio index describes latest ds, names_ordered describes previous. A little clunky.
+    model5,training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=formatted_data1,
+                           bio_idx = outputs["datatype_indices"]["bio_indices"],
+                           names_ordered=metadata3[-1]['model_col_names'],
+                           seed_value=42)
+
+    plot_training_history(training_outputs_finetuning['training_history'])
+
+    plot_residuals_heatmap(formatted_data1['age'], training_outputs_finetuning['predictions'])
 
     print("last metadata:")
     print(metadata3[-1])
