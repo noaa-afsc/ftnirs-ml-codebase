@@ -170,9 +170,7 @@ def main():
                            names_ordered=metadata3[-1]['model_col_names'],
                            seed_value=42)
 
-    plot_training_history(training_outputs_finetuning['training_history'])
-
-    plot_residuals_heatmap(formatted_data1['age'], training_outputs_finetuning['predictions'])
+    #plot_training_history(training_outputs_finetuning['training_history'])
 
     print("last metadata:")
     print(metadata3[-1])

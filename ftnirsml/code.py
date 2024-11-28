@@ -261,21 +261,46 @@ def plot_training_history(history):
 
 def evaluate_model(model, data, bio_names, wn_names):
 
-    bio_and_wn_data_list = [data.loc[data[SPLITNAME] == 'test', bio_names], data.loc[data[SPLITNAME] == 'test', wn_names]]
-    response_data  = data.loc[data[SPLITNAME] == 'test', RESPONSE_COLUMNS]
-
-    evaluation = model.evaluate(bio_and_wn_data_list,response_data)
+    bio_and_wn_data_list = [data.loc[:, bio_names], data.loc[:, wn_names]]
     preds = model.predict(bio_and_wn_data_list)
-    #note: don't expect this to behave properly if multiple response columns are present
-    r2 = r2_score(response_data, preds)
-    return evaluation, preds, r2
+
+    data['preds']=preds
+
+    perf_stats_split = {}
+    perf_stats_split['r2']={}
+    perf_stats_split['loss']={}
+    perf_stats_split['mse']={}
+    perf_stats_split['mae']={}
+
+    #split specific stats:
+    for i in list(data['split'].unique()):
+
+        perf_stats_split[i]={}
+
+        #a little inneffecient...
+
+        bio_and_wn_data_list = [data.loc[data['split'] == i, bio_names], data.loc[data['split'] == i, wn_names]]
+        response_data  = data.loc[data['split'] == i, RESPONSE_COLUMNS]
+
+        evaluation = model.evaluate(bio_and_wn_data_list,response_data)
+        preds = model.predict(bio_and_wn_data_list)
+        #note: don't expect this to behave properly if multiple response columns are present
+        r2 = r2_score(response_data, preds)
+
+        perf_stats_split[i]['r2']=r2
+        perf_stats_split[i]['loss'] = evaluation[0]
+        perf_stats_split[i]['mse'] = evaluation[1]
+        perf_stats_split[i]['mae'] = evaluation[2]
+        perf_stats_split[i]['nrow']=len(bio_and_wn_data_list)
+
+    return perf_stats_split, preds
 
 def plot_predictions(y_test, preds):
     plt.figure(figsize=(6, 6))
     plt.scatter(y_test, preds)
     plt.xlabel('True')
     plt.ylabel('Predicted')
-    lims = [-2.5, 5]
+    lims = [min([min(y_test),min(preds)])-0.1, max([max(y_test),max(preds)])+0.1]
     plt.xlim(lims)
     plt.ylim(lims)
     plt.plot(lims, lims)
@@ -355,13 +380,14 @@ def test_set_plot(y_test_transformed, y_pred_transformed):
     plt.ylabel('FT-NIR Age (years)')
     return plt
 
-def bland_altman_plot(y_test_transformed, y_pred_transformed):
-    plt = pyCompare.blandAltman(y_test_transformed.flatten(), y_pred_transformed.flatten(),
-                          limitOfAgreement=1.96, confidenceInterval=95,
-                          confidenceIntervalMethod='approximate',
-                          detrend=None, percentage=False,
-                          title='Bland-Altman Plot\n')
-    return plt
+#ddoesn't do anything the original doesn't
+#def bland_altman_plot(y_test_transformed, y_pred_transformed):
+#    plt = pyCompare.blandAltman(y_test_transformed, y_pred_transformed,
+#                          limitOfAgreement=1.96, confidenceInterval=95,
+#                          confidenceIntervalMethod='approximate',
+#                          detrend=None, percentage=False,
+#                          title='Bland-Altman Plot\n')
+#    return plt
 
 # Manual model building for training without hyperband 
 def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, stride_size, dropout_rate, use_max_pooling, num_filters, dense_units, dropout_rate_2):
@@ -853,15 +879,14 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
         history = final_training_pass(model, padded_data, epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
 
 
-    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
+    stats, preds = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
 
     model.summary()
 
     training_outputs = {
         'training_history': history,
-        'evaluation': evaluation,
+        'stats': stats,
         'predictions': preds,
-        'r2_score': r2,
         'model_col_names': {'bio_column_names_ordered':bio_names_ordered,'bio_column_names_ordered_padded':bio_names_ordered_padded,'wn_columns_names_ordered':wn_columns_names_ordered}
     }
 
@@ -899,20 +924,18 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
     )
 
     history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered,**kwargs)
-    
-    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
-    print(f"Evaluation: {evaluation}, R2: {r2}")
-    
+
+    #evalution is 3 item array of metrics in .fit - loss,mse,mae
+    stats, preds = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
+
     model.summary()
 
-    import code
-    code.interact(local=dict(globals(), **locals()))
+
     
     training_outputs = {
         'training_history': history,
-        'evaluation': evaluation,
+        'stats': stats,
         'predictions': preds,
-        'r2_score': r2,
         'model_col_names': {'bio_column_names_ordered':bio_names_ordered,'bio_column_names_ordered_padded':bio_names_ordered_padded,'wn_columns_names_ordered':wn_columns_names_ordered}
     }
     
@@ -937,17 +960,15 @@ def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch
     history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'],**kwargs)
     
     # Evaluate the model
-    evaluation, preds, r2 = evaluate_model(model, padded_data,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])
-    print(f"Evaluation: {evaluation}, R2: {r2}")
-    
+    stats, preds = evaluate_model(model, padded_data,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])
+
     model.summary()
     
     # Prepare the output
     training_outputs = {
         'training_history': history,
-        'evaluation': evaluation,
+        'stats': stats,
         'predictions': preds,
-        'r2_score': r2,
         'model_col_names': {'bio_column_names_ordered': bio_names_ordered,
                             'bio_column_names_ordered_padded': bio_names_ordered_padded,
                             'wn_columns_names_ordered': names_ordered['wn_columns_names_ordered']}
@@ -1090,66 +1111,7 @@ def loadModelWithMetadata(zip_path,model_name=None):
 
     return model,metadata
 
-def cross_validate_model(model, data, k=5):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-
-    kf = KFold(n_splits=k, shuffle=True, random_state=42)
-    X_biological = data[data.columns[3:100]]
-    X_wavenumbers = data[data.columns[100:1100]]
-    y = data['age']
-    
-    scores = []
-    for train_index, test_index in kf.split(X_biological):
-        X_train_biological, X_test_biological = X_biological.iloc[train_index], X_biological.iloc[test_index]
-        X_train_wavenumbers, X_test_wavenumbers = X_wavenumbers.iloc[train_index], X_wavenumbers.iloc[test_index]
-        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
-        
-        model.fit([X_train_biological, X_train_wavenumbers], y_train, epochs=5, verbose=0)
-        score = model.evaluate([X_test_biological, X_test_wavenumbers], y_test, verbose=0)
-        scores.append(score)
-    
-    return scores
-
-def compare_models(models, data):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    comparison_results = {}
-    X_test_biological = data[data.columns[3:100]]
-    X_test_wavenumbers = data[data.columns[100:1100]]
-    y_test = data['age']
-    
-    for model_name, model in models.items():
-        preds = model.predict([X_test_biological, X_test_wavenumbers])
-        r2 = r2_score(y_test, preds)
-        mse = mean_squared_error(y_test, preds)
-        comparison_results[model_name] = {'R2': r2, 'MSE': mse}
-    
-    return comparison_results
-
-from sklearn.model_selection import GridSearchCV
-
-# Probably don't let people run this on shared resources/web hosting but let them run it on their own systems
-def grid_search_model(data, param_grid):
-
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
-
-    X_biological = data[data.columns[3:100]]
-    X_wavenumbers = data[data.columns[100:1100]]
-    y = data['age']
-    
-    model = KerasRegressor(build_fn=build_model_manual, epochs=10, batch_size=32, verbose=0)
-    
-    grid = GridSearchCV(estimator=model, param_grid=param_grid, scoring='neg_mean_squared_error', cv=3)
-    grid_result = grid.fit([X_biological, X_wavenumbers], y)
-    
-    return grid_result.best_params_, grid_result.best_score_
-
+#dan comment: this works but very ugly. bugged or just not a great vis?
 def plot_residuals_heatmap(y_test, preds):
     residuals = y_test - preds.flatten()
     plt.figure(figsize=(10, 6))
