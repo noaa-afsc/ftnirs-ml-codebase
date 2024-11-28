@@ -44,6 +44,7 @@ def main():
 
     model1,training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
         data=formatted_data,
+        scaler=format_metadata['scaler'],
         bio_idx = format_metadata["datatype_indices"]["bio_indices"],
         wn_idx = format_metadata["datatype_indices"]["wn_indices"],
         total_bio_columns=100,
@@ -57,6 +58,7 @@ def main():
 
     model2,training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
         data=formatted_data,
+        scaler=format_metadata['scaler'],
         bio_idx = format_metadata["datatype_indices"]["bio_indices"],
         wn_idx = format_metadata["datatype_indices"]["wn_indices"],
         total_bio_columns=100,
@@ -70,12 +72,17 @@ def main():
 
     #test out inference on the same dataset as training
 
-    prediction1 = InferenceMode(model2,formatted_data.loc[1:5], metadata['scaler'],metadata['model_col_names']) #should be the same as 1
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
+    prediction1,stats = InferenceMode(model2,formatted_data.loc[1:5], metadata['scaler'],metadata['model_col_names']) #should be the same as 1
+    print(stats)
     print(prediction1)
 
     #test out inference on the same dataset as training, but this time using the existing scaler.
     formatted_data1, _, _ = format_data(data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
-    prediction2 = InferenceMode(model2, formatted_data1.loc[1:5], metadata['scaler'],metadata['model_col_names'])
+    prediction2,stats = InferenceMode(model2, formatted_data1.loc[1:5], metadata['scaler'],metadata['model_col_names'])
+    print(stats)
     print(prediction2)
 
     #should be the same or very close.
@@ -87,7 +94,7 @@ def main():
     test_data.drop("gear_depth",axis=1,inplace=True)
     formatted_data2,_,_ = format_data(test_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
 
-    prediction1_drop = InferenceMode(model2, formatted_data2.loc[1:5], metadata['scaler'],metadata['model_col_names'])
+    prediction1_drop,_ = InferenceMode(model2, formatted_data2.loc[1:5], metadata['scaler'],metadata['model_col_names'])
     print(prediction1_drop)
 
     #see what happens when I load in another dataset entirely, format it, and plug it into inference.
@@ -96,7 +103,7 @@ def main():
 
     #not sure if the values (bad) represent an incorrect approach or natural poor performance.
     formatted_diff_data, _, _ = format_data(different_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'], splitvec=[0, 0])
-    prediction1_alt = InferenceMode(model2, formatted_diff_data.loc[1:5], metadata['scaler'],metadata['model_col_names'])
+    prediction1_alt,_ = InferenceMode(model2, formatted_diff_data.loc[1:5], metadata['scaler'],metadata['model_col_names'])
 
     print(prediction1_alt)
 
@@ -108,10 +115,13 @@ def main():
     saveModelWithMetadata(model2,model_w_metadata_path, metadata=metadata)
     model2, metadata = loadModelWithMetadata(model_w_metadata_path)
 
-    model3, training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model2,data=formatted_data,
-                           bio_idx = metadata["datatype_indices"]["bio_indices"],
-                           names_ordered=metadata['model_col_names'],
-                           seed_value=42)
+    model3, training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(
+        model=model2,
+        scaler=metadata['scaler'],
+        data=formatted_data,
+        bio_idx = metadata["datatype_indices"]["bio_indices"],
+        names_ordered=metadata['model_col_names'],
+        seed_value=42)
 
     new_metadata = training_outputs_finetuning
     new_metadata["description"] = 'Train the original model again using the same data in a second round.'
@@ -130,10 +140,13 @@ def main():
     formatted_data1, outputs, _ = format_data(different_data, filter_CHOICE=metadata2[-1]['filter'], scaler=metadata2[-1]['scaler'],splitvec=[40, 70],add_scale=True)
 
     #bio idx and names ordered both needed because bio index describes latest ds, names_ordered describes previous. A little clunky.
-    model4,training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model3,data=formatted_data1,
-                           bio_idx = outputs["datatype_indices"]["bio_indices"],
-                           names_ordered=metadata2[-1]['model_col_names'],
-                           seed_value=42)
+    model4,training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(
+        model=model3,
+        scaler=metadata2[-1]['scaler'],
+        data=formatted_data1,
+        bio_idx = outputs["datatype_indices"]["bio_indices"],
+        names_ordered=metadata2[-1]['model_col_names'],
+        seed_value=42)
 
     new_metadata = training_outputs_finetuning
     new_metadata["description"] = 'retrain last model (trained on AFSC data) using new data from NWFSC'
@@ -151,7 +164,7 @@ def main():
     formatted_data1, outputs, _ = format_data(different_data, filter_CHOICE=metadata3[-1]['filter'],
                                               scaler=metadata3[-1]['scaler'], splitvec=[0, 0])
 
-    prediction1_alt = InferenceMode(model, formatted_data1.loc[1:5], metadata3[-1]['scaler'],metadata3[-1]['model_col_names'])
+    prediction1_alt,_ = InferenceMode(model, formatted_data1.loc[1:5], metadata3[-1]['scaler'],metadata3[-1]['model_col_names'])
 
     #test condition: remove a category for a one-hot encoded variable to see if it is handled correctly.
 
@@ -165,10 +178,13 @@ def main():
                                               scaler=metadata3[-1]['scaler'], splitvec=[39, 61],add_scale=True)
 
     #bio idx and names ordered both needed because bio index describes latest ds, names_ordered describes previous. A little clunky.
-    model5,training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(model=model,data=formatted_data1,
-                           bio_idx = outputs["datatype_indices"]["bio_indices"],
-                           names_ordered=metadata3[-1]['model_col_names'],
-                           seed_value=42)
+    model5,training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(
+        model=model,
+        scaler=metadata3[-1]['scaler'],
+        data=formatted_data1,
+        bio_idx = outputs["datatype_indices"]["bio_indices"],
+        names_ordered=metadata3[-1]['model_col_names'],
+        seed_value=42)
 
     #plot_training_history(training_outputs_finetuning['training_history'])
 

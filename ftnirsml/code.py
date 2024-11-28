@@ -259,41 +259,52 @@ def plot_training_history(history):
     plt.legend(['Train', 'Validation'], loc='upper right')
     plt.show()
 
-def evaluate_model(model, data, bio_names, wn_names):
+def evaluate_model(model,scaler, data, bio_names, wn_names):
 
     bio_and_wn_data_list = [data.loc[:, bio_names], data.loc[:, wn_names]]
-    preds = model.predict(bio_and_wn_data_list)
-
-    data['preds']=preds
+    preds_all = model.predict(bio_and_wn_data_list)
+    preds_all = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(preds_all)
 
     perf_stats_split = {}
-    perf_stats_split['r2']={}
-    perf_stats_split['loss']={}
-    perf_stats_split['mse']={}
-    perf_stats_split['mae']={}
 
     #split specific stats:
     for i in list(data['split'].unique()):
 
-        perf_stats_split[i]={}
+        #make sure any of the rows within the split have valid ages (not NA)
 
-        #a little inneffecient...
+        if data.loc[data['split'] == i, RESPONSE_COLUMNS].notna().any()[0]:
 
-        bio_and_wn_data_list = [data.loc[data['split'] == i, bio_names], data.loc[data['split'] == i, wn_names]]
-        response_data  = data.loc[data['split'] == i, RESPONSE_COLUMNS]
+            #subset to just the relevant data- correct split and w/ ages.
+            #import code
+            #code.interact(local=dict(globals(), **locals()))
+            datasub = data[(data['split'] == i) & (data[RESPONSE_COLUMNS].notna()['age'])]
 
-        evaluation = model.evaluate(bio_and_wn_data_list,response_data)
-        preds = model.predict(bio_and_wn_data_list)
-        #note: don't expect this to behave properly if multiple response columns are present
-        r2 = r2_score(response_data, preds)
+            perf_stats_split[i]={}
 
-        perf_stats_split[i]['r2']=r2
-        perf_stats_split[i]['loss'] = evaluation[0]
-        perf_stats_split[i]['mse'] = evaluation[1]
-        perf_stats_split[i]['mae'] = evaluation[2]
-        perf_stats_split[i]['nrow']=len(bio_and_wn_data_list)
+            #a little inneffecient to reculate preds...
 
-    return perf_stats_split, preds
+            bio_and_wn_data_list = [datasub.loc[:, bio_names], datasub.loc[:, wn_names]]
+            response_data  = datasub.loc[:, RESPONSE_COLUMNS]
+            evaluation = model.evaluate(bio_and_wn_data_list, response_data)
+
+            response_data = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(response_data)
+
+            preds = model.predict(bio_and_wn_data_list)
+            preds = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(preds)
+            #note: don't expect this to behave properly if multiple response columns are present
+            r2 = r2_score(response_data, preds)
+
+            perf_stats_split[i]['r2']=r2
+            perf_stats_split[i]['loss'] = evaluation[0]
+            perf_stats_split[i]['mse'] = evaluation[1]
+            perf_stats_split[i]['mae'] = evaluation[2]
+            perf_stats_split[i]['nrow']=len(datasub)
+
+    #get nrow for any present non aged data. since preds calculated for whole thing can subset downstream.
+    perf_stats_split['unaged']={}
+    perf_stats_split['unaged']['nrow']=int(data[RESPONSE_COLUMNS].isna().sum())
+
+    return perf_stats_split, preds_all
 
 def plot_predictions(y_test, preds):
     plt.figure(figsize=(6, 6))
@@ -425,22 +436,13 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
 # Inference function 
 def InferenceMode(model, data, scaler,names_ordered):
 
-
     padded_data, _ = pad_bio_columns(data, names_ordered['bio_column_names_ordered'],
                                                             total_bio_columns=len(names_ordered['bio_column_names_ordered_padded']))
 
-    # Run inference
-    prediction = model.predict([padded_data[names_ordered['bio_column_names_ordered_padded']], data[names_ordered['wn_columns_names_ordered']]])
+    #do the normal eval
+    stats, preds = evaluate_model(model, scaler, padded_data, names_ordered['bio_column_names_ordered_padded'], names_ordered['wn_columns_names_ordered'])
 
-    #check to inform of case where multiple respond columns are provided, not yet solved for this case and
-    #throughout codebase
-    if prediction.shape[1]>1:
-        raise ValueError("cannot yet handle multiple response columns in data")
-
-    # Inverse transform the prediction to the original scale
-    prediction = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(prediction)
-
-    return prediction
+    return preds,stats
 
 def wnExtract(data_columns):
 
@@ -847,7 +849,7 @@ def pad_bio_columns(data,bio_names_ordered,total_bio_columns=None,extra_bio_colu
     return data,list(bio_data.columns)
 
 # Training Mode with Hyperband 
-def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, epochs = 30, batch_size = 32, seed_value=42,**kwargs):
+def TrainingModeWithHyperband(data: pd.DataFrame,scaler,bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, epochs = 30, batch_size = 32, seed_value=42,**kwargs):
 
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
@@ -879,7 +881,7 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
         history = final_training_pass(model, padded_data, epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
 
 
-    stats, preds = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
+    stats, preds = evaluate_model(model, scaler, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
 
     model.summary()
 
@@ -894,7 +896,7 @@ def TrainingModeWithHyperband(data: pd.DataFrame, bio_idx, wn_idx,total_bio_colu
     return model,training_outputs, {best_hp}
 
 # Training Mode without Hyperband
-def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35, batch_size = 32, seed_value=42,total_bio_columns=None,extra_bio_columns=None, \
+def TrainingModeWithoutHyperband(data: pd.DataFrame, scaler, bio_idx, wn_idx, epochs=35, batch_size = 32, seed_value=42,total_bio_columns=None,extra_bio_columns=None, \
                                  num_conv_layers = 2, kernel_size = 101, stride_size = 51, dropout_rate = 0.1, use_max_pooling = False, num_filters = 50, dense_units = 256, dropout_rate_2 = 0.1,\
                                  **kwargs):
 
@@ -926,11 +928,9 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
     history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered,**kwargs)
 
     #evalution is 3 item array of metrics in .fit - loss,mse,mae
-    stats, preds = evaluate_model(model, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
+    stats, preds = evaluate_model(model, scaler, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
 
     model.summary()
-
-
     
     training_outputs = {
         'training_history': history,
@@ -942,7 +942,7 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, bio_idx, wn_idx, epochs=35,
     return model,training_outputs, {}
 
 # Training Mode with Fine-tuning 
-def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch_size = 32, seed_value=42,**kwargs):
+def TrainingModeFinetuning(model,scaler, data,bio_idx,names_ordered, epochs = 35, batch_size = 32, seed_value=42,**kwargs):
 
     bio_names_ordered = [data.columns[x] for x in bio_idx] #this gets us the current dataset columns. can assume due to format_data dummy col behavior that previous columns are represented and values are scaled properly to
     #represent MISSING_DATA_VALUE.
@@ -960,7 +960,7 @@ def TrainingModeFinetuning(model, data,bio_idx,names_ordered, epochs = 35, batch
     history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'],**kwargs)
     
     # Evaluate the model
-    stats, preds = evaluate_model(model, padded_data,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])
+    stats, preds = evaluate_model(model,scaler,padded_data,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])
 
     model.summary()
     
