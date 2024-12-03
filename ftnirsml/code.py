@@ -259,13 +259,18 @@ def plot_training_history(history):
     plt.legend(['Train', 'Validation'], loc='upper right')
     plt.show()
 
-def evaluate_model(model,scaler, data, bio_names, wn_names):
+def evaluate_model(model,scaler, data, bio_names, wn_names,splitnames=["training","validation","test"]):
 
     bio_and_wn_data_list = [data.loc[:, bio_names], data.loc[:, wn_names]]
     preds_all = model.predict(bio_and_wn_data_list)
     preds_all = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(preds_all)
 
     perf_stats_split = {}
+
+    perf_stats_split['unaged'] = {}
+    for i in splitnames:
+        perf_stats_split[i] = {}
+        perf_stats_split['nrow']=0
 
     #split specific stats:
     for i in list(data['split'].unique()):
@@ -301,7 +306,6 @@ def evaluate_model(model,scaler, data, bio_names, wn_names):
             perf_stats_split[i]['nrow']=len(datasub)
 
     #get nrow for any present non aged data. since preds calculated for whole thing can subset downstream.
-    perf_stats_split['unaged']={}
     perf_stats_split['unaged']['nrow']=int(data[RESPONSE_COLUMNS].isna().sum())
 
     return perf_stats_split, preds_all
@@ -979,24 +983,26 @@ def TrainingModeFinetuning(model,scaler, data,bio_idx,names_ordered, epochs = 35
 # Spectra preprocessing function 
 def preprocess_spectra(data, filter_type='savgol'):
 
-    #required to not have side effects on the original data object
-    data = deepcopy(data)
+    if filter_type is not None:
 
-    _, _, _, _, _, wn_inds = wnExtract(data.columns)
+        #required to not have side effects on the original data object
+        data = deepcopy(data)
 
-    filter_functions = {
-        'savgol': savgol,
-        'moving_average': moving_average,
-        'gaussian': gaussian,
-        'median': median,
-        'wavelet': wavelet,
-        'fourier': fourier,
-        'pca': pca
-    }
-    
-    filter_func = filter_functions.get(filter_type, savgol)
+        _, _, _, _, _, wn_inds = wnExtract(data.columns)
 
-    data.iloc[:, wn_inds] = filter_func(data.iloc[:, wn_inds].values)
+        filter_functions = {
+            'savgol': savgol,
+            'moving_average': moving_average,
+            'gaussian': gaussian,
+            'median': median,
+            'wavelet': wavelet,
+            'fourier': fourier,
+            'pca': pca
+        }
+
+        filter_func = filter_functions.get(filter_type, savgol)
+
+        data.iloc[:, wn_inds] = filter_func(data.iloc[:, wn_inds].values)
 
     return data
 
