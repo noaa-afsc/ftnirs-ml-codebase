@@ -270,7 +270,7 @@ def evaluate_model(model,scaler, data, bio_names, wn_names,splitnames=["training
     perf_stats_split['unaged'] = {}
     for i in splitnames:
         perf_stats_split[i] = {}
-        perf_stats_split['nrow']=0
+        perf_stats_split[i]['nrow']=0
 
     #split specific stats:
     for i in list(data['split'].unique()):
