@@ -1045,7 +1045,9 @@ def formatMetadata(metadata=None,previous_metadata=None,mandate_some_fields=True
             print("Previous metadata is a dict: assuming only one previous training event. If not a correct assumption, supply a list of all previous metadata dicts.")
             previous_metadata = [previous_metadata]
 
-        previous_metadata.append(metadata)
+        if metadata is not None:
+            previous_metadata.append(metadata)
+
         metadata_all = previous_metadata
     else:
         #allow for metadata of list len 1 being supplied, or just a dict
