@@ -604,7 +604,7 @@ def autoOneHot(data,expand_nonstandard_str=True,NA_as_one_hot_category=True):
 
                     #fill NA if present
                     if NA_as_one_hot_category:
-                        data[data.columns[i]] = data[data.columns[i]].fillna("NA")
+                        data[data.columns[i]] = data[data.columns[i]].fillna("<NA>")
 
                     #expand into one hot.
                     biological_expanded.append(pd.get_dummies(data[data.columns[i]],prefix=data.columns[i]+ONE_HOT_FLAG).astype(int))
@@ -619,7 +619,7 @@ def autoOneHot(data,expand_nonstandard_str=True,NA_as_one_hot_category=True):
                 #if variable performance compared to just leaving NA data out of one-hot.
 
                 if NA_as_one_hot_category:
-                    data[data.columns[i]] = data[data.columns[i]].fillna("NA")
+                    data[data.columns[i]] = data[data.columns[i]].fillna("<NA>")
 
                 # if the column is a string, perform the exansion based on category names.
                 if expand_nonstandard_str:
@@ -784,6 +784,9 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
         data[data_mod.columns]=data_mod
 
     else:
+
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
 
         # assess new feature columns
         data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]

@@ -25,6 +25,41 @@ sns.set(style="whitegrid", font_scale=2)
 def main():
     print("running!")
 
+    earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
+
+
+    #train a model with one hot, and then try to apply it back on original dataset.
+
+    filepath1='./Data/NWFSC_data_sample_trunc.csv'
+    data1 = pd.read_csv(filepath1)
+    data1.loc[1, "sex"] =  pd.NA
+    #data1 = data1.fillna(pd.NA)
+
+    formatted_data, format_metadata, og_data_info = format_data(data1, filter_CHOICE='savgol',scaler='MinMaxScaler',bio_scaler='MinMaxScaler',wn_scaler='MinMaxScaler',response_scaler='MinMaxScaler',
+                                                                splitvec=[40, 70], interp_minmaxstep=[3952.0, 8000.0, 8.0])
+
+    model, training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
+        data=formatted_data,
+        scaler=format_metadata['scaler'],
+        bio_idx=format_metadata["datatype_indices"]["bio_indices"],
+        wn_idx=format_metadata["datatype_indices"]["wn_indices"],
+        total_bio_columns=100,
+        callbacks=[CustomCallback(), earlystop]
+    )
+
+    #import code
+   # code.interact(local=dict(globals(), **locals()))
+
+    data1 = pd.read_csv(filepath1)
+    data1.loc[1, "sex"] = pd.NA
+    #data1 = data1.fillna(pd.NA)
+
+    formatted_data, format_metadata, og_data_info = format_data(data1, filter_CHOICE=format_metadata['filter'], scaler=format_metadata['scaler'],splitvec=[0, 0])
+
+    prediction,_ = InferenceMode(model, formatted_data.loc[1:5], format_metadata['scaler'],training_outputs_manual['model_col_names'])
+
+
+
     #filepath1='./Data/NWFSC_data_sample_trunc.csv'
     #data1 = pd.read_csv(filepath1)
     filepath2 = './Data/AFSC_data_sample_trunc.csv'
@@ -54,7 +89,6 @@ def main():
     )
 
 
-    earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
     model2,training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
         data=formatted_data,
@@ -196,6 +230,8 @@ def main():
 
     print("original metadata:")
     print(metadata3[-3])
+
+
 
     print('test complete!')
 
