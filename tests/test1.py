@@ -47,8 +47,7 @@ def main():
         callbacks=[CustomCallback(), earlystop]
     )
 
-    #import code
-   # code.interact(local=dict(globals(), **locals()))
+
 
     data1 = pd.read_csv(filepath1)
     data1.loc[1, "sex"] = pd.NA
@@ -58,12 +57,19 @@ def main():
 
     prediction,_ = InferenceMode(model, formatted_data.loc[1:5], format_metadata['scaler'],training_outputs_manual['model_col_names'])
 
-
-
     #filepath1='./Data/NWFSC_data_sample_trunc.csv'
     #data1 = pd.read_csv(filepath1)
     filepath2 = './Data/AFSC_data_sample_trunc.csv'
     data2 = pd.read_csv(filepath2)
+
+    formatted_data2, format_metadata2, og_data_info = format_data(data2, filter_CHOICE=format_metadata['filter'],
+                                                                scaler=format_metadata['scaler'], splitvec=[0, 0])
+
+    prediction, _ = InferenceMode(model, formatted_data2.loc[1:5], format_metadata2['scaler'],training_outputs_manual['model_col_names'])
+
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     #filepath3 = './Data/SEFSC_data_sample_trunc.csv'
     #data3 = pd.read_csv(filepath3)
     #data = [data1,data2,data3]

@@ -731,7 +731,10 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
             #for those with ohc in col.
             model_one_hot_features = set(["".join(col.split("_")[:-2]) for col in model_bio_features if ONE_HOT_FLAG in col])
             for m in model_one_hot_features:
-                present_one_hot = [f"{m}{ONE_HOT_FLAG}_{x}" for x in data[m].unique()]
+                if m in data:
+                    present_one_hot = [f"{m}{ONE_HOT_FLAG}_{x}" for x in data[m].unique()]
+                else:
+                    present_one_hot = []
                 missing_one_hot = [col for col in [l for l in model_bio_features if m in l and ONE_HOT_FLAG in l] if col not in present_one_hot]
                 data[missing_one_hot] = 0
 
