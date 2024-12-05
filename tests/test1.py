@@ -47,8 +47,6 @@ def main():
         callbacks=[CustomCallback(), earlystop]
     )
 
-
-
     data1 = pd.read_csv(filepath1)
     data1.loc[1, "sex"] = pd.NA
     #data1 = data1.fillna(pd.NA)
@@ -174,8 +172,6 @@ def main():
     #try with a model trainined 2 previous times
     model3, metadata2 = loadModelWithMetadata(model_w_metadata_path)
 
-
-
     #create and transform with a scaler that encompasses the different data
     formatted_data1, outputs, _ = format_data(different_data, filter_CHOICE=metadata2[-1]['filter'], scaler=metadata2[-1]['scaler'],splitvec=[40, 70],add_scale=True)
 
@@ -205,6 +201,13 @@ def main():
                                               scaler=metadata3[-1]['scaler'], splitvec=[0, 0])
 
     prediction1_alt,_ = InferenceMode(model, formatted_data1.loc[1:5], metadata3[-1]['scaler'],metadata3[-1]['model_col_names'])
+
+    #also, attempt to run back on afsc (original) training data
+
+    formatted_data1_, outputs_, _ = format_data(data, filter_CHOICE=metadata3[-1]['filter'],
+                                              scaler=metadata3[-1]['scaler'], splitvec=[0, 0])
+
+    prediction1_alt_,_ = InferenceMode(model, formatted_data1_, metadata3[-1]['scaler'],metadata3[-1]['model_col_names'])
 
     #test condition: remove a category for a one-hot encoded variable to see if it is handled correctly.
 

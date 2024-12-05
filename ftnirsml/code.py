@@ -711,7 +711,7 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
         data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
         data_bio_columns = [x for x in data_feature_columns if WN_MATCH not in x]
 
-        model_bio_features = [x[0] for x in sum([z.transformers[:-1] for z in scaler],[]) if x[0] not in RESPONSE_COLUMNS]
+        model_bio_features = [x[0] for x in sum([z.transformers for z in scaler],[]) if x[0] not in RESPONSE_COLUMNS and WN_MATCH not in x[0]]
         model_wn_features = scaler[0].transformers[-1][2]
 
         # check if the col names representing # are similar or not the same. Safe to assume at this point both are consecutive and on the right side of the ds.
@@ -815,7 +815,16 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
             #import code
             #code.interact(local=dict(globals(), **locals()))
             if bio_scaler is None:
-                bio_scaler = scaler[0].transformers[dt_indices[2][0]][1]#For new columns, since they have to be bio columns currently, grab the latest bio column scaler by default. but can also supply this explicitly.
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
+                bio_scalers = [[str(p.named_transformers_[i])[:-2] for i in p.named_transformers_ if i != WN_STRING_NAME or i != response_scaler] for p in scaler]
+                bio_scalers = set([x for xs in bio_scalers for x in xs])
+                if 'FunctionTransformer' in bio_scalers:
+                    bio_scalers.remove('FunctionTransformer')
+
+                bio_scalers = list(bio_scalers)
+                bio_scaler = bio_scalers[0] if len(bio_scalers) >= 1 else 'MinMaxScaler' #haven't formally defined this as default, but w/e
+
             data_new,new_scaler = create_scale(data[new_features],bio_scaler)
             scaler.append(new_scaler[0])
 
@@ -1039,9 +1048,7 @@ def formatMetadata(metadata=None,previous_metadata=None,mandate_some_fields=True
 
     #allow for previous metadata to be a dict, which will be interpreted as a list of len 1
     if previous_metadata is not None:
-        if isinstance(previous_metadata, list):
-            pass
-        else:
+        if not isinstance(previous_metadata, list):
             print("Previous metadata is a dict: assuming only one previous training event. If not a correct assumption, supply a list of all previous metadata dicts.")
             previous_metadata = [previous_metadata]
 
