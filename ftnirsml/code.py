@@ -276,37 +276,41 @@ def evaluate_model(model,scaler, data, bio_names, wn_names,splitnames=["training
     for i in list(data['split'].unique()):
 
         #make sure any of the rows within the split have valid ages (not NA)
+        if any([a in data.columns for a in RESPONSE_COLUMNS]):
 
-        if data.loc[data['split'] == i, RESPONSE_COLUMNS].notna().any()[0]:
+            if data.loc[data['split'] == i, RESPONSE_COLUMNS].notna().any()[0]:
 
-            #subset to just the relevant data- correct split and w/ ages.
-            #import code
-            #code.interact(local=dict(globals(), **locals()))
-            datasub = data[(data['split'] == i) & (data[RESPONSE_COLUMNS].notna()['age'])]
+                #subset to just the relevant data- correct split and w/ ages.
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
+                datasub = data[(data['split'] == i) & (data[RESPONSE_COLUMNS].notna()['age'])]
 
-            perf_stats_split[i]={}
+                perf_stats_split[i]={}
 
-            #a little inneffecient to reculate preds...
+                #a little inneffecient to reculate preds...
 
-            bio_and_wn_data_list = [datasub.loc[:, bio_names], datasub.loc[:, wn_names]]
-            response_data  = datasub.loc[:, RESPONSE_COLUMNS]
-            evaluation = model.evaluate(bio_and_wn_data_list, response_data)
+                bio_and_wn_data_list = [datasub.loc[:, bio_names], datasub.loc[:, wn_names]]
+                response_data  = datasub.loc[:, RESPONSE_COLUMNS]
+                evaluation = model.evaluate(bio_and_wn_data_list, response_data)
 
-            response_data = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(response_data)
+                response_data = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(response_data)
 
-            preds = model.predict(bio_and_wn_data_list)
-            preds = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(preds)
-            #note: don't expect this to behave properly if multiple response columns are present
-            r2 = r2_score(response_data, preds)
+                preds = model.predict(bio_and_wn_data_list)
+                preds = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(preds)
+                #note: don't expect this to behave properly if multiple response columns are present
+                r2 = r2_score(response_data, preds)
 
-            perf_stats_split[i]['r2']=r2
-            perf_stats_split[i]['loss'] = evaluation[0]
-            perf_stats_split[i]['mse'] = evaluation[1]
-            perf_stats_split[i]['mae'] = evaluation[2]
-            perf_stats_split[i]['nrow']=len(datasub)
+                perf_stats_split[i]['r2']=r2
+                perf_stats_split[i]['loss'] = evaluation[0]
+                perf_stats_split[i]['mse'] = evaluation[1]
+                perf_stats_split[i]['mae'] = evaluation[2]
+                perf_stats_split[i]['nrow']=len(datasub)
 
     #get nrow for any present non aged data. since preds calculated for whole thing can subset downstream.
-    perf_stats_split['unaged']['nrow']=int(data[RESPONSE_COLUMNS].isna().sum())
+    if any([a in data.columns for a in RESPONSE_COLUMNS]):
+        perf_stats_split['unaged']['nrow']=int(data[RESPONSE_COLUMNS].isna().sum())
+    else:
+        perf_stats_split['unaged']['nrow']=len(data)
 
     return perf_stats_split, preds_all
 
@@ -801,19 +805,28 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
         cols_in_order = []
 
         #if splitvec == [39, 61]:
-        #    import code
-        #    code.interact(local=dict(globals(), **locals()))
+        #
 
         # scale existing
         for i in list(range(1,len(scaler)+1))[::-1]:
+            #print(i)
+            #print(data_bio_columns)
+            dummy_age = False
+            if 'age' not in data.columns:
+                dummy_age = True
+                #easier to just make a column temporarily than try to change behavior of transform method
+                data['age']=0.1
+
             data_mod = transform(data, scaler[-i]) #list(data.iloc[:, dt_indices[1]].columns), dt_indices[1]
             data[data_mod.columns] = data_mod
+
+            if dummy_age:
+                data = data.drop('age', axis=1)
 
         if add_scale and len(new_features) > 0:
 
             # create a scaler for new columns
-            #import code
-            #code.interact(local=dict(globals(), **locals()))
+            #
             if bio_scaler is None:
                 #import code
                 #code.interact(local=dict(globals(), **locals()))

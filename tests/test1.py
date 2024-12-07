@@ -55,6 +55,20 @@ def main():
 
     prediction,_ = InferenceMode(model, formatted_data.loc[1:5], format_metadata['scaler'],training_outputs_manual['model_col_names'])
 
+    #test- take a dataset without ages and run it through inference.
+
+    data1 = pd.read_csv(filepath1)
+    data1 = data1.drop('age', axis=1)
+
+    formatted_data_no_age, format_metadata_no_age, og_data_info = format_data(data1, filter_CHOICE=format_metadata['filter'],
+                                                                scaler=format_metadata['scaler'], splitvec=[0, 0])
+
+    prediction,stats = InferenceMode(model, formatted_data_no_age.loc[1:5], format_metadata_no_age['scaler'],training_outputs_manual['model_col_names'])
+
+    print(stats)
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     #filepath1='./Data/NWFSC_data_sample_trunc.csv'
     #data1 = pd.read_csv(filepath1)
     filepath2 = './Data/AFSC_data_sample_trunc.csv'
@@ -228,6 +242,8 @@ def main():
         bio_idx = outputs["datatype_indices"]["bio_indices"],
         names_ordered=metadata3[-1]['model_col_names'],
         seed_value=42)
+
+
 
     #plot_training_history(training_outputs_finetuning['training_history'])
 
