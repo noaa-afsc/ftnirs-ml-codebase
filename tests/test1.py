@@ -32,6 +32,22 @@ def main():
 
     filepath1='./Data/NWFSC_data_sample_trunc.csv'
     data1 = pd.read_csv(filepath1)
+
+    #load in a model output from the app to test if it is interoperable
+    model_from_app, metadata_ = loadModelWithMetadata("./Models/unnamed.keras.zip")
+
+    #attempt to run a model trained using one hot expansion (aware of already expanded columns) back on the original data (non expanded columns)
+    #filepath1 = './Data/NWFSC_data_sample_trunc.csv'
+    #different_data = pd.read_csv(filepath1)
+    formatted_data1, outputs, _ = format_data(data1, filter_CHOICE=metadata_['filter'],
+                                              scaler=metadata_['scaler'], splitvec=[0, 0])
+
+    test_pred,statz = InferenceMode(model_from_app, formatted_data1.loc[1:5], metadata_['scaler'],metadata_['model_col_names'])
+
+    import code
+    code.interact(local=dict(globals(), **locals()))
+
+
     data1.loc[1, "sex"] =  pd.NA
     #data1 = data1.fillna(pd.NA)
 
@@ -66,8 +82,6 @@ def main():
     prediction,stats = InferenceMode(model, formatted_data_no_age.loc[1:5], format_metadata_no_age['scaler'],training_outputs_manual['model_col_names'])
 
     print(stats)
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
 
     #filepath1='./Data/NWFSC_data_sample_trunc.csv'
     #data1 = pd.read_csv(filepath1)
