@@ -44,8 +44,8 @@ def main():
 
     test_pred,statz = InferenceMode(model_from_app, formatted_data1.loc[1:5], metadata_['scaler'],metadata_['model_col_names'])
 
-    import code
-    code.interact(local=dict(globals(), **locals()))
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
 
 
     data1.loc[1, "sex"] =  pd.NA
@@ -92,6 +92,24 @@ def main():
                                                                 scaler=format_metadata['scaler'], splitvec=[0, 0])
 
     prediction, _ = InferenceMode(model, formatted_data2.loc[1:5], format_metadata2['scaler'],training_outputs_manual['model_col_names'])
+
+    #train model on two datasets, then apply back to original individual as well as combined. Ensure they match.
+    data1 = pd.read_csv(filepath1)
+    formatted_data_comb, comb_meta, og_data_info = format_data([data1,data2],filter_CHOICE='savgol',scaler='MinMaxScaler',splitvec=[40,70])
+
+    model_comb,training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
+        data=formatted_data_comb,
+        scaler=comb_meta['scaler'],
+        bio_idx = comb_meta["datatype_indices"]["bio_indices"],
+        wn_idx = comb_meta["datatype_indices"]["wn_indices"],
+        total_bio_columns=100,
+        callbacks=[CustomCallback(),earlystop]
+    )
+
+    #apply it back to both of the datasets
+
+    single_dataset, single_meta, og_data_info = format_data(data2, filter_CHOICE=comb_meta['filter'],
+                                                                  scaler=comb_meta['scaler'], splitvec=[0, 0])
 
     #import code
     #code.interact(local=dict(globals(), **locals()))

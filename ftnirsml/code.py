@@ -614,7 +614,7 @@ def autoOneHot(data,expand_nonstandard_str=True,NA_as_one_hot_category=True):
                     biological_expanded.append(pd.get_dummies(data[data.columns[i]],prefix=data.columns[i]+ONE_HOT_FLAG).astype(int))
 
                 else:
-                    data[data.columns[i]] = data[data.columns[i]].fillna(-1)
+                    data[data.columns[i]] = data[data.columns[i]].fillna(MISSING_DATA_VALUE)
                     biological_expanded.append(data[data.columns[i]])
 
             elif data[data.columns[i]].apply(lambda x: isinstance(x,str)).any():
@@ -637,7 +637,7 @@ def autoOneHot(data,expand_nonstandard_str=True,NA_as_one_hot_category=True):
 
                 #if it's not standard, or if it's not a string, assume it's numeric / integer and thus can interpret a -1 value (caution with this assumption)
 
-                data[data.columns[i]] = data[data.columns[i]].fillna(-1)
+                data[data.columns[i]] = data[data.columns[i]].fillna(MISSING_DATA_VALUE)
                 biological_expanded.append(data[data.columns[i]])
 
     bio = pd.concat(biological_expanded,axis = 1)
@@ -740,7 +740,12 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
                 else:
                     present_one_hot = []
                 missing_one_hot = [col for col in [l for l in model_bio_features if m in l and ONE_HOT_FLAG in l] if col not in present_one_hot]
+                #if len(missing_one_hot)>0:
+                    #make sure to add in an <NA> column, if previously present or not, and give it value of 1.
+                #    import code
+                #    code.interact(local=dict(globals(), **locals()))
                 data[missing_one_hot] = 0
+                data[[i for i in missing_one_hot if '<NA>' in i]] = 1
 
         # for one hot: this should indeed consider whether certain categories are no longer present in the provided column- for instance, in the sex category,
         # if there is M,F and I (immature), we will want to establish here if 'I' column needs to be added as dummy col. for one hot, this should be given a value
@@ -778,8 +783,14 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
     #(maybe that's an optional behavior, alternative behavior would be to include extra columns as simply informational?)
     data,dt_indices = autoOneHot(data)
 
-
     data = preprocess_spectra(data, filter_CHOICE)
+
+    #think we might need to fill <NA> here with missing data value- pretty sure it is being converted to min val
+    #by transformers.
+    if data.isnull().values.any():
+        import code
+        code.interact(local=dict(globals(), **locals()))
+        data = data.fillna(MISSING_DATA_VALUE)
 
     if isinstance(scaler,str):
 
