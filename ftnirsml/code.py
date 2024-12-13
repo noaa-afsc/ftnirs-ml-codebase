@@ -787,10 +787,10 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
 
     #think we might need to fill <NA> here with missing data value- pretty sure it is being converted to min val
     #by transformers.
-    if data.isnull().values.any():
-        import code
-        code.interact(local=dict(globals(), **locals()))
-        data = data.fillna(MISSING_DATA_VALUE)
+    #if data.isnull().values.any():
+    #    import code
+    #    code.interact(local=dict(globals(), **locals()))
+    #    data = data.fillna(MISSING_DATA_VALUE)
 
     if isinstance(scaler,str):
 
