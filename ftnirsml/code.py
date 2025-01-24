@@ -920,8 +920,9 @@ def TrainingModeWithHyperband(data: pd.DataFrame,scaler,bio_idx, wn_idx,total_bi
             seed=seed_value
         )
 
-        model, best_hp = train_and_optimize_model(tuner, padded_data, epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
-        history = final_training_pass(model, padded_data, epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
+        #drop any NA in response for training
+        model, best_hp = train_and_optimize_model(tuner, padded_data.dropna(subset=RESPONSE_COLUMNS), epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
+        history = final_training_pass(model, padded_data.dropna(subset=RESPONSE_COLUMNS), epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
 
 
     stats, preds = evaluate_model(model, scaler, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
@@ -968,7 +969,7 @@ def TrainingModeWithoutHyperband(data: pd.DataFrame, scaler, bio_idx, wn_idx, ep
         dropout_rate_2
     )
 
-    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered,**kwargs)
+    history = final_training_pass(model, padded_data.dropna(subset=RESPONSE_COLUMNS), epochs, batch_size,bio_names_ordered_padded,wn_columns_names_ordered,**kwargs)
 
     #evalution is 3 item array of metrics in .fit - loss,mse,mae
     stats, preds = evaluate_model(model, scaler, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
@@ -1000,7 +1001,7 @@ def TrainingModeFinetuning(model,scaler, data,bio_idx,names_ordered, epochs = 35
     np.random.seed(seed_value)
     tf.random.set_seed(seed_value)
 
-    history = final_training_pass(model, padded_data, epochs, batch_size,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'],**kwargs)
+    history = final_training_pass(model, padded_data.dropna(subset=RESPONSE_COLUMNS), epochs, batch_size,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'],**kwargs)
     
     # Evaluate the model
     stats, preds = evaluate_model(model,scaler,padded_data,bio_names_ordered_padded,names_ordered['wn_columns_names_ordered'])

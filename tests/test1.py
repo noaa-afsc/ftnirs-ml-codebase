@@ -27,8 +27,27 @@ def main():
 
     earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
-
     #train a model with one hot, and then try to apply it back on original dataset.
+
+    filepath = './Data/AFSC_2017_pollock_20perc_truth.csv'
+    data = pd.read_csv(filepath)
+
+    formatted_data, format_metadata, og_data_info = format_data(data, filter_CHOICE='savgol',scaler='MinMaxScaler',bio_scaler='MinMaxScaler',wn_scaler='MinMaxScaler',response_scaler='MinMaxScaler',
+                                                                splitvec=[40, 70], interp_minmaxstep=[3952.0, 8000.0, 8.0])
+
+    model, training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
+        data=formatted_data,
+        scaler=format_metadata['scaler'],
+        bio_idx=format_metadata["datatype_indices"]["bio_indices"],
+        wn_idx=format_metadata["datatype_indices"]["wn_indices"],
+        total_bio_columns=100,
+        callbacks=[CustomCallback(), earlystop]
+    )
+
+    #does model train without error? Seems to.
+
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
 
     filepath1='./Data/NWFSC_data_sample_trunc.csv'
     data1 = pd.read_csv(filepath1)
