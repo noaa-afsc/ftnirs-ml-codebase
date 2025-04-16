@@ -261,6 +261,8 @@ def plot_training_history(history):
 
 def evaluate_model(model,scaler, data, bio_names, wn_names,splitnames=["training","validation","test"]):
 
+    print(data.columns)
+
     bio_and_wn_data_list = [data.loc[:, bio_names], data.loc[:, wn_names]]
     preds_all = model.predict(bio_and_wn_data_list)
     preds_all = scaler[0].named_transformers_[RESPONSE_COLUMNS[0]].inverse_transform(preds_all)
@@ -281,8 +283,7 @@ def evaluate_model(model,scaler, data, bio_names, wn_names,splitnames=["training
             if data.loc[data['split'] == i, RESPONSE_COLUMNS].notna().any()[0]:
 
                 #subset to just the relevant data- correct split and w/ ages.
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
+
                 datasub = data[(data['split'] == i) & (data[RESPONSE_COLUMNS].notna()['age'])]
 
                 perf_stats_split[i]={}
@@ -690,7 +691,8 @@ def hash_dataset(data: pd.DataFrame) -> str:
 
 def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=None,response_scaler=None,splitvec=None, interp_minmaxstep = None,add_scale=False):
     data = deepcopy(data)
-    dummy_col = []
+    inactive_cols = []
+
 
     if isinstance(data,list):
         og_data_hashes = [hash_dataset(i) for i in data]
@@ -728,22 +730,29 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
         data = data.rename(columns={data.iloc[:, wn_inds[x]].name: model_wn_features[x] for x in range(len(wn_inds))})
 
         #also while in this conditional, can add in extra bio columns that will be needed for both inference and fine-tune
+        cols_active = {x: True for x in model_bio_features if ONE_HOT_FLAG not in x} #base case, will change below if not
 
         if not all([x in data_bio_columns for x in model_bio_features]):
             dummy_col = [col for col in model_bio_features if col not in data_bio_columns and ONE_HOT_FLAG not in col]
             data[dummy_col] = MISSING_DATA_VALUE
+
+            [cols_active.update({i: False}) for i in dummy_col]
+
             #for those with ohc in col.
             model_one_hot_features = set(["".join(col.split("_")[:-2]) for col in model_bio_features if ONE_HOT_FLAG in col])
+
             for m in model_one_hot_features:
+
                 if m in data:
                     present_one_hot = [f"{m}{ONE_HOT_FLAG}_{x}" for x in data[m].unique()]
+                    cols_active.update({m: True})
                 else:
                     present_one_hot = []
+                    #set as inactive.
+                    cols_active.update({m:False})
                 missing_one_hot = [col for col in [l for l in model_bio_features if m in l and ONE_HOT_FLAG in l] if col not in present_one_hot]
                 #if len(missing_one_hot)>0:
                     #make sure to add in an <NA> column, if previously present or not, and give it value of 1.
-                #    import code
-                #    code.interact(local=dict(globals(), **locals()))
                 data[missing_one_hot] = 0
                 data[[i for i in missing_one_hot if '<NA>' in i]] = 1
 
@@ -792,6 +801,12 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
     #    code.interact(local=dict(globals(), **locals()))
     #    data = data.fillna(MISSING_DATA_VALUE)
 
+    data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
+    data_bio_columns = [x for x in data_feature_columns if WN_MATCH not in x]
+
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     if isinstance(scaler,str):
 
         bio_scaler = bio_scaler if bio_scaler is not None else scaler
@@ -801,22 +816,20 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
         data_mod, scaler = create_scale(data[[[i for i in data.columns][x] for x in dt_indices[0]+dt_indices[2]+dt_indices[3]]], bio_scaler,wn_scaler,response_scaler)
         data[data_mod.columns]=data_mod
 
+        cols_active = {x: True for x in data_bio_columns}
+
     else:
 
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
-
         # assess new feature columns
-        data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
-        data_bio_columns = [x for x in data_feature_columns if WN_MATCH not in x]
 
         model_bio_features = [x[0] for x in sum([z.transformers[:-1] for z in scaler],[]) if x[0] not in RESPONSE_COLUMNS]
         new_features = [x for x in data_bio_columns if x not in model_bio_features and 'UNDECLARED_' not in x]
 
         cols_in_order = []
 
+        #[cols_active.update({i:False}) for i in inactive_cols]
+
         #if splitvec == [39, 61]:
-        #
 
         # scale existing
         for i in list(range(1,len(scaler)+1))[::-1]:
@@ -839,8 +852,6 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
             # create a scaler for new columns
             #
             if bio_scaler is None:
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
                 bio_scalers = [[str(p.named_transformers_[i])[:-2] for i in p.named_transformers_ if i != WN_STRING_NAME or i != response_scaler] for p in scaler]
                 bio_scalers = set([x for xs in bio_scalers for x in xs])
                 if 'FunctionTransformer' in bio_scalers:
@@ -854,7 +865,10 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
 
             data[data_new.columns] = data_new
 
-    outputs = {"scaler":scaler,"filter":filter_CHOICE,"splits":{"vec":splitvec,"origination":split_behavior},
+            #[cols_active.update({i: True}) for i in data_new.columns]
+
+    #if adding new
+    outputs = {"scaler":scaler,"filter":filter_CHOICE,"splits":{"vec":splitvec,"origination":split_behavior}, "cols_active":cols_active,
                 "datatype_indices":{"response_indices":dt_indices[0],"informational_indices":dt_indices[1],"bio_indices":dt_indices[2],"wn_indices":dt_indices[3]}}
 
     return data,outputs,og_data_hashes

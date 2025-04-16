@@ -44,10 +44,9 @@ def main():
         callbacks=[CustomCallback(), earlystop]
     )
 
-    #does model train without error? Seems to.
 
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
+
+    #does model train without error? Seems to.
 
     filepath1='./Data/NWFSC_data_sample_trunc.csv'
     data1 = pd.read_csv(filepath1)
@@ -62,10 +61,6 @@ def main():
                                               scaler=metadata_['scaler'], splitvec=[0, 0])
 
     test_pred,statz = InferenceMode(model_from_app, formatted_data1.loc[1:5], metadata_['scaler'],metadata_['model_col_names'])
-
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
-
 
     data1.loc[1, "sex"] =  pd.NA
     #data1 = data1.fillna(pd.NA)
@@ -88,6 +83,9 @@ def main():
 
     formatted_data, format_metadata, og_data_info = format_data(data1, filter_CHOICE=format_metadata['filter'], scaler=format_metadata['scaler'],splitvec=[0, 0])
 
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     prediction,_ = InferenceMode(model, formatted_data.loc[1:5], format_metadata['scaler'],training_outputs_manual['model_col_names'])
 
     #test- take a dataset without ages and run it through inference.
@@ -97,6 +95,9 @@ def main():
 
     formatted_data_no_age, format_metadata_no_age, og_data_info = format_data(data1, filter_CHOICE=format_metadata['filter'],
                                                                 scaler=format_metadata['scaler'], splitvec=[0, 0])
+
+
+
 
     prediction,stats = InferenceMode(model, formatted_data_no_age.loc[1:5], format_metadata_no_age['scaler'],training_outputs_manual['model_col_names'])
 
@@ -197,6 +198,9 @@ def main():
     test_data.drop("gear_depth",axis=1,inplace=True)
     formatted_data2,_,_ = format_data(test_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
 
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     prediction1_drop,_ = InferenceMode(model2, formatted_data2.loc[1:5], metadata['scaler'],metadata['model_col_names'])
     print(prediction1_drop)
 
@@ -277,8 +281,7 @@ def main():
     #test condition: remove a category for a one-hot encoded variable to see if it is handled correctly.
 
     #first, lets check that this data doesn't have side effects...
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
+
 
     different_data['sex'] = different_data['sex'].replace('M', 'I') #swap out a category to simulate both removing and adding.
 
@@ -307,6 +310,30 @@ def main():
     print("original metadata:")
     print(metadata3[-3])
 
+
+
+    #test: fully drop a bio column- does it get accounted for as inactive in metadata cols_active?
+    data1 = pd.read_csv(filepath1)
+    data1 = data1.drop(columns=['gear_depth'])
+
+    formatted_data, format_metadata, og_data_info = format_data(data1, filter_CHOICE=metadata_['filter'],
+                                              scaler=metadata_['scaler'], splitvec=[0, 0])
+
+    #test: fully drop a ohc colum
+
+    data1 = pd.read_csv(filepath1)
+    data1 = data1.drop(columns=['sex'])
+
+    formatted_data, format_metadata, og_data_info = format_data(data1, filter_CHOICE=metadata_['filter'],
+                                                                scaler=metadata_['scaler'], splitvec=[0, 0])
+
+    #test: fully drop a two columns
+
+    data1 = pd.read_csv(filepath1)
+    data1 = data1.drop(columns=['sex','gear_depth'])
+
+    formatted_data, format_metadata, og_data_info = format_data(data1, filter_CHOICE=metadata_['filter'],
+                                                                scaler=metadata_['scaler'], splitvec=[0, 0])
 
 
     print('test complete!')
