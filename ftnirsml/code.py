@@ -869,7 +869,7 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
 
             new_one_hot_features =  set(["".join(col.split("_")[:-2]) for col in data_new.columns if ONE_HOT_FLAG in col])
 
-            cols_active.update({m:True} for i in new_one_hot_features)
+            cols_active.update({i:True} for i in new_one_hot_features)
 
 
     #if adding new
