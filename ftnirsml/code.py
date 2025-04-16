@@ -865,7 +865,7 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
 
             data[data_new.columns] = data_new
 
-            #[cols_active.update({i: True}) for i in data_new.columns]
+            [cols_active.update({i: True}) for i in data_new.columns]
 
     #if adding new
     outputs = {"scaler":scaler,"filter":filter_CHOICE,"splits":{"vec":splitvec,"origination":split_behavior}, "cols_active":cols_active,
