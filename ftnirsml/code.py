@@ -867,6 +867,11 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
 
             [cols_active.update({i: True}) for i in data_new.columns if ONE_HOT_FLAG not in i]
 
+            new_one_hot_features =  set(["".join(col.split("_")[:-2]) for col in data_new.columns if ONE_HOT_FLAG in col])
+
+            cols_active.update({m:True} for i in new_one_hot_features)
+
+
     #if adding new
     outputs = {"scaler":scaler,"filter":filter_CHOICE,"splits":{"vec":splitvec,"origination":split_behavior}, "cols_active":cols_active,
                 "datatype_indices":{"response_indices":dt_indices[0],"informational_indices":dt_indices[1],"bio_indices":dt_indices[2],"wn_indices":dt_indices[3]}}
