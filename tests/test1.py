@@ -77,6 +77,10 @@ def main():
         callbacks=[CustomCallback(), earlystop]
     )
 
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
+
     data1 = pd.read_csv(filepath1)
     data1.loc[1, "sex"] = pd.NA
     #data1 = data1.fillna(pd.NA)
@@ -131,8 +135,6 @@ def main():
     single_dataset, single_meta, og_data_info = format_data(data2, filter_CHOICE=comb_meta['filter'],
                                                                   scaler=comb_meta['scaler'], splitvec=[0, 0])
 
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
 
     #filepath3 = './Data/SEFSC_data_sample_trunc.csv'
     #data3 = pd.read_csv(filepath3)

@@ -13,7 +13,7 @@ setup(
     install_requires=[
     "pandas",
     "numpy",
-    "tensorflow > 2",
+    "tensorflow >= 2.11.0,<2.16.0",
     "keras_tuner",
     "seaborn",
     "pyCompare",
@@ -28,7 +28,7 @@ setup(
         "License :: MIT License'",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',  
+    python_requires='>=3.6,<=3.11',
     include_package_data=True,  # Include files from MANIFEST.in
     zip_safe=False,  
 )
