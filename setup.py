@@ -28,7 +28,7 @@ setup(
         "License :: MIT License'",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6,<=3.11.4',
+    python_requires='>=3.6,<=3.11.5', #3.11.5 was latest that seemed to install correctly
     include_package_data=True,  # Include files from MANIFEST.in
     zip_safe=False,  
 )
