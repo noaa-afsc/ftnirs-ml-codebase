@@ -65,8 +65,25 @@ TRAINING_APPROACHES = {"Basic model":{'description':"basic, customizable model",
         "dense_units":{"display_name":"Number of dense units:", "data_type":"number", "data_type2":int,"min_value":None,"max_value":None,"default_value":256},
         "dropout_rate_2":{"display_name":"Dropout rate (2):", "data_type":"number", "data_type2":float,"min_value":None,"max_value":None,"default_value":0.1}}},
                        "hyperband tuning model":{'description':"A version of the basic model with hyperband parameter tuning",'finetunable':False,"default_value":False, "parameters": \
-                               {"hyperband_max_epoch":{"display_name":"hyperband max epoch:","data_type":"number","data_type2":int,"min_value":0,"max_value":None,"default_value":35}}}}
-
+                               {"hyperband_max_epoch":{"display_name":"hyperband max epoch:","data_type":"number","data_type2":int,"min_value":0,"max_value":None,"default_value":35}}},
+                       "irina CIE 2025": {
+                               'description': "The exact model Irina used for CIE 2025 Pollock. ",
+                               'finetunable': False, "default_value": False, "parameters": \
+                                       {"hyperband_max_epoch": {"display_name": "hyperband max epoch:",
+                                                                "data_type": "number", "data_type2": int,
+                                                                "min_value": 0, "max_value": None,
+                                                                "default_value": 200},
+                                        "final_train_epochs": {"display_name": "final train epochs:",
+                                                                "data_type": "number", "data_type2": int,
+                                                                "min_value": 0, "max_value": None,
+                                                                "default_value": 2000},
+                                        "num_extra_bio": {"display_name": "additional bio columns to allow fine-tuning:",
+                                                               "data_type": "number", "data_type2": int,
+                                                               "min_value": 0, "max_value": 200,
+                                                               "default_value": 0},
+                                        'use_custom_loss':{"display_name":"Use custom loss fxn: False","data_type":"boolean","data_type2":bool,"min_value":False,"max_value":True,"default_value":True}
+                                        }
+                       }}
 
 #other columns won't be defined, by definition, we will not know the appropriate datatype and instead will have logic to guess between
 #categorical and continuous.

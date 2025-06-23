@@ -19,7 +19,7 @@ from scipy.interpolate import interp1d
 from sklearn.metrics import r2_score, mean_squared_error
 from math import sqrt
 from keras_tuner.tuners import  Hyperband
-from tensorflow.keras.layers import LeakyReLU, Input, Dense, Dropout, Flatten, Conv1D, MaxPooling1D, concatenate
+from tensorflow.keras.layers import BatchNormalization,LeakyReLU, Input, Dense, Dropout, Flatten, Conv1D, MaxPooling1D, concatenate
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
 from scipy.ndimage import uniform_filter1d, gaussian_filter1d, median_filter
@@ -441,6 +441,80 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
     model = Model(inputs=[input_A, input_B], outputs=output)
     model.compile(optimizer=Adam(), loss='mse', metrics=['mse', 'mae'])
     return model
+
+
+def build_model_irina(hp,input_dim_A, input_dim_B,loss_fxn="mse",age_counts=None):
+    input_A = Input(shape=(input_dim_A,))
+    x = input_A
+
+    x = Dense(hp.Int('output_A',4,128,step=4,default=4),activation='elu')(x)
+    x = Dropout(hp.Float('dropout_A',0.0,0.5,step=0.05,default=0.1))(x)
+
+    input_B = Input(shape=(input_dim_B, 1))
+    y = input_B
+
+    y = Conv1D(hp.Int('num_filters', 50, 100, step=10, default=50),
+               kernel_size=201, strides=101, activation='relu', padding='same')(input_B)
+    y = Flatten()(y)
+    y = Dense(hp.Int('dense_1', 32, 640, step=64, default=512), activation='elu', )(y)
+    y = Dropout(hp.Float('dropout_1', 0.0, 0.5, step=0.05, default=0.1))(y)
+    y = Dense(hp.Int('dense_2', 4, 128, step=32, default=128), activation='elu', )(y)
+    y = Dropout(hp.Float('dropout_2', 0.0, 0.5, step=0.05, default=0.1))(y)
+
+    con = concatenate(inputs=[x, y])
+
+    z = Dense(hp.Int('dense_1', 4, 640, step=128, default=512), activation='elu', )(con)
+    z = Dropout(hp.Float('dropout_1', 0.0, 0.5, step=0.05, default=0.1))(z)
+    z = Dense(hp.Int('dense_2', 4, 128, step=32, default=128), activation='elu', )(z)
+    z = Dropout(hp.Float('dropout_2', 0.0, 0.5, step=0.05, default=0.1))(z)
+    z = BatchNormalization()(z)
+
+    output = Dense(1, activation="linear")(z)
+    model = Model(inputs=[input_A, input_B], outputs=output)
+    model.compile(optimizer='adam', loss=loss_fxn(counts=age_counts) if loss_fxn!= 'mse' else 'mse', metrics=['mse', 'mae']) #"mse" if loss_fxn == 'mse' else
+    return model
+
+def irina_custom_loss(counts=None,min_clip=200, max_clip=5000, min_weight=100.0, max_weight=1000.0):
+
+    def loss(y_true,y_pred):
+
+        mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred)
+        y_true_flat = tf.reshape(y_true, [-1])
+        y_true_flat_int = tf.cast(y_true_flat, tf.int32)
+
+        # Clip the counts to the min_clip and max_clip range
+        clipped_counts = np.clip(counts, min_clip, max_clip)
+
+        # Define the weight calculation logic
+        def calculate_weight(count):
+            if count <= min_clip:
+                return max_weight
+            elif count >= max_clip:
+                return min_weight
+            else:
+                return ((max_clip - min_clip - count) / (max_clip - min_clip)) ** 2 * (max_weight - min_weight) + min_weight
+
+        # Calculate the weights for all counts
+        weights = np.array([calculate_weight(count) for count in clipped_counts])
+
+        # Convert weights to a Tensor for TensorFlow operations
+        weights_tf = tf.convert_to_tensor(weights, dtype=tf.float32)
+
+        # Ensure the age values in y_true are within the valid range [1, 23]
+        y_true_clipped = tf.clip_by_value(y_true_flat_int, 1, len(counts))
+
+        # Adjust y_true_clipped for zero-based indexing to gather correct weights
+        indices = y_true_clipped - 1
+
+        # Gather the weights corresponding to the ages in y_true_clipped
+        class_weights = tf.gather(weights_tf, indices)
+
+        # Apply the weights to the MSE loss
+        weighted_mse = mse * class_weights
+
+        return weighted_mse
+
+    return loss
 
 # Inference function 
 def InferenceMode(model, data, scaler,names_ordered):
@@ -909,6 +983,76 @@ def pad_bio_columns(data,bio_names_ordered,total_bio_columns=None,extra_bio_colu
         data = pd.concat([bio_data, data_minus_bio_data], axis=1) #not the same as before, but completely internal, slightly easier logic for idx predictability
 
     return data,list(bio_data.columns)
+
+#irina's lates:
+
+def TrainingModeIrinaLatest(data: pd.DataFrame,scaler,bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=0,epochs=2000,max_epochs_hb=200, batch_size = 128, seed_value=42,loss_fxn=irina_custom_loss,**kwargs):
+
+    np.random.seed(seed_value)
+    tf.random.set_seed(seed_value)
+
+    # named order of bio and wn columns:
+    bio_names_ordered = [data.columns[x] for x in bio_idx]
+    wn_columns_names_ordered = [data.columns[x] for x in wn_idx]
+
+    padded_data, bio_names_ordered_padded = pad_bio_columns(data, bio_names_ordered,
+                                                            total_bio_columns=total_bio_columns,
+                                                            extra_bio_columns=extra_bio_columns)
+
+    input_dim_A = len(bio_names_ordered_padded)
+    input_dim_B = len(wn_idx)
+
+    y_train_flat =  data.loc[data[SPLITNAME] == 'training', "age"]
+    age_series = pd.Series(y_train_flat)
+
+    # get the frequency of each age and sort by index (age)
+    age_counts = age_series.value_counts().sort_index()
+    counts = age_counts.values.astype(np.float32)
+
+    def model_builder(hp):
+        return build_model_irina(hp, input_dim_A, input_dim_B,loss_fxn=loss_fxn,age_counts=counts)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tuner = Hyperband(
+            model_builder,
+            objective='val_loss',
+            max_epochs=max_epochs_hb,
+            directory=tmpdir,
+            project_name='mmcnn',
+            seed=seed_value
+        )
+
+        #drop any NA in response for training
+        early_stop_for_later = []
+        #if callback in kwargs, search for early stop and pop it out.
+        objs = kwargs.get("callbacks",[])
+        for i,f in enumerate(objs):
+            #do this since callback doesn't exist in this codebase, but may in prod
+            if f.__class__.__name__ == "EarlyStopping":
+                early_stop_for_later.append(kwargs['callbacks'].pop(i))
+
+        #remove early stop for hyperband.
+        model, best_hp = train_and_optimize_model(tuner, padded_data.dropna(subset=RESPONSE_COLUMNS), max_epochs_hb, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
+
+        if len(early_stop_for_later)>0:
+            kwargs['callbacks'].append(early_stop_for_later[0])
+
+        history = final_training_pass(model, padded_data.dropna(subset=RESPONSE_COLUMNS), epochs, batch_size, bio_names_ordered_padded, wn_columns_names_ordered,**kwargs)
+
+
+    stats, preds = evaluate_model(model, scaler, padded_data,bio_names_ordered_padded,wn_columns_names_ordered)
+
+    model.summary()
+
+    training_outputs = {
+        'training_history': history,
+        'stats': stats,
+        'predictions': preds,
+        'model_col_names': {'bio_column_names_ordered':bio_names_ordered,'bio_column_names_ordered_padded':bio_names_ordered_padded,'wn_columns_names_ordered':wn_columns_names_ordered}
+    }
+
+    #could return top 3 in extra outputs, etc.
+    return model,training_outputs, {best_hp}
 
 # Training Mode with Hyperband 
 def TrainingModeWithHyperband(data: pd.DataFrame,scaler,bio_idx, wn_idx,total_bio_columns=None,extra_bio_columns=None,max_epochs=35, epochs = 30, batch_size = 32, seed_value=42,**kwargs):

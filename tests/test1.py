@@ -1,4 +1,4 @@
-from ftnirsml.code import saveModelWithMetadata,loadModelWithMetadata,TrainingModeWithHyperband,TrainingModeWithoutHyperband,InferenceMode,TrainingModeFinetuning,format_data,plot_training_history,plot_residuals_heatmap
+from ftnirsml.code import TrainingModeIrinaLatest,irina_custom_loss,saveModelWithMetadata,loadModelWithMetadata,TrainingModeWithHyperband,TrainingModeWithoutHyperband,InferenceMode,TrainingModeFinetuning,format_data,plot_training_history,plot_residuals_heatmap
 import tensorflow as tf
 import numpy as np
 import seaborn as sns
@@ -35,6 +35,18 @@ def main():
     formatted_data, format_metadata, og_data_info = format_data(data, filter_CHOICE='savgol',scaler='MinMaxScaler',bio_scaler='MinMaxScaler',wn_scaler='MinMaxScaler',response_scaler='MinMaxScaler',
                                                                 splitvec=[40, 70], interp_minmaxstep=[3952.0, 8000.0, 8.0])
 
+    model, training_outputs_manual, additional_outputs_manual = TrainingModeIrinaLatest(
+        data=formatted_data,
+        scaler=format_metadata['scaler'],
+        bio_idx=format_metadata["datatype_indices"]["bio_indices"],
+        wn_idx=format_metadata["datatype_indices"]["wn_indices"],
+        extra_bio_columns=0,
+        callbacks=[CustomCallback(), earlystop],
+        epochs=2,
+        max_epochs_hb=5,
+        loss_fxn = 'mse'
+    )
+
     model, training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
         data=formatted_data,
         scaler=format_metadata['scaler'],
@@ -43,6 +55,8 @@ def main():
         total_bio_columns=100,
         callbacks=[CustomCallback(), earlystop]
     )
+
+
 
 
 
