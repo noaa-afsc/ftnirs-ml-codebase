@@ -43,8 +43,7 @@ def main():
         extra_bio_columns=0,
         callbacks=[CustomCallback(), earlystop],
         epochs=2,
-        max_epochs_hb=5,
-        loss_fxn = 'mse'
+        max_epochs_hb=5
     )
 
     model, training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
@@ -91,8 +90,6 @@ def main():
         callbacks=[CustomCallback(), earlystop]
     )
 
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
 
 
     data1 = pd.read_csv(filepath1)

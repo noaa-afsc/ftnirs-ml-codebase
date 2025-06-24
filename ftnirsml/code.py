@@ -22,6 +22,7 @@ from keras_tuner.tuners import  Hyperband
 from tensorflow.keras.layers import BatchNormalization,LeakyReLU, Input, Dense, Dropout, Flatten, Conv1D, MaxPooling1D, concatenate
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import register_keras_serializable
 from scipy.ndimage import uniform_filter1d, gaussian_filter1d, median_filter
 from copy import deepcopy
 #PyWavelets
@@ -474,6 +475,7 @@ def build_model_irina(hp,input_dim_A, input_dim_B,loss_fxn="mse",age_counts=None
     model.compile(optimizer='adam', loss=loss_fxn(counts=age_counts) if loss_fxn!= 'mse' else 'mse', metrics=['mse', 'mae']) #"mse" if loss_fxn == 'mse' else
     return model
 
+@register_keras_serializable()
 def irina_custom_loss(counts=None,min_clip=200, max_clip=5000, min_weight=100.0, max_weight=1000.0):
 
     def loss(y_true,y_pred):
