@@ -46,6 +46,23 @@ def main():
         max_epochs_hb=5
     )
 
+    #save irina model model to see whether custom loss fxn works properly.
+
+    model_w_metadata_path = "./Models/my_model_with_custom_loss.keras.zip"
+
+    training_outputs_manual.update(format_metadata)
+
+    training_outputs_manual["description"] = 'Can we use it again with the custom loss function in keras model?'
+
+    saveModelWithMetadata(model,model_w_metadata_path, metadata=training_outputs_manual)
+
+    model2, metadata = loadModelWithMetadata(model_w_metadata_path)
+
+    predictions,_ = InferenceMode(model2, formatted_data.loc[1:5], metadata['scaler'],metadata['model_col_names'])
+
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     model, training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
         data=formatted_data,
         scaler=format_metadata['scaler'],
@@ -211,8 +228,7 @@ def main():
     test_data.drop("gear_depth",axis=1,inplace=True)
     formatted_data2,_,_ = format_data(test_data, filter_CHOICE=metadata['filter'], scaler=metadata['scaler'],splitvec=[0, 0])
 
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
+
 
     prediction1_drop,_ = InferenceMode(model2, formatted_data2.loc[1:5], metadata['scaler'],metadata['model_col_names'])
     print(prediction1_drop)

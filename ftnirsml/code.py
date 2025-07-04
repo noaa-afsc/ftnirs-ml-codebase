@@ -23,6 +23,7 @@ from tensorflow.keras.layers import BatchNormalization,LeakyReLU, Input, Dense, 
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import register_keras_serializable
+from tensorflow.keras.losses import Loss
 from scipy.ndimage import uniform_filter1d, gaussian_filter1d, median_filter
 from copy import deepcopy
 #PyWavelets
@@ -475,35 +476,36 @@ def build_model_irina(hp,input_dim_A, input_dim_B,loss_fxn="mse",age_counts=None
     model.compile(optimizer='adam', loss=loss_fxn(counts=age_counts) if loss_fxn!= 'mse' else 'mse', metrics=['mse', 'mae']) #"mse" if loss_fxn == 'mse' else
     return model
 
+
 @register_keras_serializable()
-def irina_custom_loss(counts=None,min_clip=200, max_clip=5000, min_weight=100.0, max_weight=1000.0):
+class irina_custom_loss(Loss):
+    def __init__(self, counts=None, min_clip=200, max_clip=5000,
+                 min_weight=100.0, max_weight=1000.0, name='irina_custom_loss', **kwargs):
+        super().__init__(name=name, **kwargs)
+        # Store all configuration parameters as instance attributes
+        self.counts = counts
+        self.min_clip = min_clip
+        self.max_clip = max_clip
+        self.min_weight = min_weight
+        self.max_weight = max_weight
 
-    def loss(y_true,y_pred):
-
+    def call(self, y_true, y_pred):
         mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred)
         y_true_flat = tf.reshape(y_true, [-1])
         y_true_flat_int = tf.cast(y_true_flat, tf.int32)
 
         # Clip the counts to the min_clip and max_clip range
-        clipped_counts = np.clip(counts, min_clip, max_clip)
-
-        # Define the weight calculation logic
-        def calculate_weight(count):
-            if count <= min_clip:
-                return max_weight
-            elif count >= max_clip:
-                return min_weight
-            else:
-                return ((max_clip - min_clip - count) / (max_clip - min_clip)) ** 2 * (max_weight - min_weight) + min_weight
+        clipped_counts = np.clip(self.counts, self.min_clip, self.max_clip)
 
         # Calculate the weights for all counts
-        weights = np.array([calculate_weight(count) for count in clipped_counts])
+        weights = np.array([self.max_weight if x <= self.min_clip else (self.min_weight if x >= self.max_clip else ((self.max_clip - self.min_clip - x) / (self.max_clip - self.min_clip)) ** 2 * (
+                            self.max_weight - self.min_weight) + self.min_weight) for x in clipped_counts])
 
         # Convert weights to a Tensor for TensorFlow operations
         weights_tf = tf.convert_to_tensor(weights, dtype=tf.float32)
 
         # Ensure the age values in y_true are within the valid range [1, 23]
-        y_true_clipped = tf.clip_by_value(y_true_flat_int, 1, len(counts))
+        y_true_clipped = tf.clip_by_value(y_true_flat_int, 1, len(self.counts))
 
         # Adjust y_true_clipped for zero-based indexing to gather correct weights
         indices = y_true_clipped - 1
@@ -516,7 +518,19 @@ def irina_custom_loss(counts=None,min_clip=200, max_clip=5000, min_weight=100.0,
 
         return weighted_mse
 
-    return loss
+    def get_config(self):
+
+        # Get the base class's config
+        config = super().get_config()
+        # Add all your __init__ parameters to the config
+        config.update({
+            'counts': self.counts,
+            'min_clip': self.min_clip,
+            'max_clip': self.max_clip,
+            'min_weight': self.min_weight,
+            'max_weight': self.max_weight
+        })
+        return config
 
 # Inference function 
 def InferenceMode(model, data, scaler,names_ordered):
@@ -873,8 +887,7 @@ def format_data(data,filter_CHOICE=None,scaler=None,bio_scaler=None,wn_scaler=No
     #think we might need to fill <NA> here with missing data value- pretty sure it is being converted to min val
     #by transformers.
     #if data.isnull().values.any():
-    #    import code
-    #    code.interact(local=dict(globals(), **locals()))
+
     #    data = data.fillna(MISSING_DATA_VALUE)
 
     data_feature_columns = [x for x in data.columns if x not in INFORMATIONAL + RESPONSE_COLUMNS]
@@ -1008,8 +1021,7 @@ def TrainingModeIrinaLatest(data: pd.DataFrame,scaler,bio_idx, wn_idx,total_bio_
     age_series = pd.Series(y_train_flat)
 
     # get the frequency of each age and sort by index (age)
-    age_counts = age_series.value_counts().sort_index()
-    counts = age_counts.values.astype(np.float32)
+    counts = age_series.value_counts().sort_index().index.tolist()
 
     def model_builder(hp):
         return build_model_irina(hp, input_dim_A, input_dim_B,loss_fxn=loss_fxn,age_counts=counts)
