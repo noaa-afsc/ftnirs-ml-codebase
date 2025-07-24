@@ -669,6 +669,10 @@ def standardize_data(data,interp_minmaxstep = None):
 
             interp_min, interp_max, interp_step_size = wn_min, wn_max, wn_step_size
 
+        #if wn order is ascending, leave as is
+        else:
+            interp_min, interp_max, interp_step_size = wn_min, wn_max, wn_step_size
+
     return data, [interp_min,interp_max,interp_step_size], wn_inds
 
 def autoOneHot(data,expand_nonstandard_str=True,NA_as_one_hot_category=True):
